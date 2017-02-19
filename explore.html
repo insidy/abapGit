@@ -74,8 +74,10 @@ function run() {
       "'>Clone</a><br><h3>" +
       key +
       "</h3><br>" +
-      $.parseHTML(val.stars) + 
-       "<br>" +               
+       '<a class="github-button" href="https://github.com/ntkme/github-buttons" data-icon="octicon-star" data-style="mega"' +
+       'data-count-href="/ntkme/github-buttons/stargazers" data-count-api="/repos/ntkme/github-buttons#stargazers_count"' +
+       'data-count-aria-label="# stargazers on GitHub" aria-label="Star ntkme/github-buttons on GitHub">Star</a>' +
+       "<br>" +                                 
       val.description );
   });
   shuffle(items);
