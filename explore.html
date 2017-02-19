@@ -72,13 +72,15 @@ function run() {
       val.title +
       "</h2>&nbsp;<a href='sapevent:install?" +
       key +
-      "'>Clone</a><br><h3>" +
-      key +
-      "</h3><br>" +
-       '<a class="github-button" href="https://github.com/' + repoNameWithAuthor + '" data-icon="octicon-star" data-style="mega"' +
+      "'>Clone</a>" +
+                      '<a class="github-button" href="https://github.com/' + repoNameWithAuthor + '" data-icon="octicon-star" data-style="mega"' +
        'data-count-href="/' + repoNameWithAuthor + '/stargazers" data-count-api="/repos/' + repoNameWithAuthor + '#stargazers_count"' +
        'data-count-aria-label="# stargazers on GitHub" aria-label="Star ' + repoNameWithAuthor + ' on GitHub">Star</a>' +
-       "<br>" +                                 
+       "<br>" +  
+               "<br><h3>" +
+      key +
+      "</h3><br>" +
+                               
       val.description );
   });
   shuffle(items);
