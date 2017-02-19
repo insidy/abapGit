@@ -9,51 +9,61 @@
   "https://github.com/larshp/abapCov.git":
 	{ 
 		"title": "abapCov",
+		"author": "larshp",
 		"description": "Upload ABAP unit test code coverage to codecov.io"
 	},  
   "https://github.com/larshp/abapOpenChecks.git": 
 	{ 
 		"title": "abapOpenChecks",
+		"author": "larshp",
 		"description": "Open source checks for SAP Code Inspector / ABAP Test Cockpit"
 	},
   "https://github.com/larshp/abapOrion.git": 
 	{ 
 		"title": "abapOrion",
+		"author": "larshp",
 		"description": "Client implementation of Eclipse Orion protocol in ABAP for use with SAP HANA"
 	},	
   "https://github.com/larshp/abapOpenReview.git": 
 	{ 
 		"title": "abapOpenReview",
+		"author": "larshp",
 		"description": "ABAP Review Tool"
 	},		
   "https://github.com/larshp/upDOWNci.git": 
 	{ 
 		"title": "upDOWNci",
+		"author": "larshp",
 		"description": "Upload and download SAP Code Inspector variants in XML format"
 	},
   "https://github.com/larshp/FORMfactor.git": 
 	{ 
 		"title": "FORMfactor",
+		"author": "larshp",
 		"description": "Refactor FORMs to local classes"
 	},	
   "https://github.com/gregorwolf/ebid-abap-client.git": 
 	{ 
 		"title": "ebid-abap-client",
+		"author": "gregorwolf",
 		"description": "ABAP Client for the http://www.unternehmensverzeichnis.org REST API"
 	},	
   "https://github.com/Sumu-Ning/AES.git": 
 	{ 
 		"title": "AES",
+		"author": "Sumu-Ning",
 		"description": "ABAP Utilities for AES/Rijndael encryption, decryption"
 	},	
   "https://github.com/fidley/falv.git": 
 	{ 
 		"title": "falv",
+		"author": "fidley",
 		"description": "FALV - Fast ALV Grid"
 	},	
   "https://github.com/larshp/Datamatrix.git": 
 	{ 
 		"title": "Datamatrix",
+		"author": "larshp",
 		"description": "Datamatrix implemented in ABAP using smartforms"
 	}	
 }
