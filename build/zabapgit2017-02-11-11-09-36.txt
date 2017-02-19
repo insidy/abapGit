@@ -3,7 +3,7 @@ REPORT zabapgit LINE-SIZE 100.
 * See http://www.abapgit.org
 
 CONSTANTS: gc_xml_version  TYPE string VALUE 'v1.0.0',      "#EC NOTEXT
-           gc_abap_version TYPE string VALUE 'v1.29.0'.     "#EC NOTEXT
+           gc_abap_version TYPE string VALUE 'v1.27.1'.     "#EC NOTEXT
 
 ********************************************************************************
 * The MIT License (MIT)
@@ -2495,51 +2495,35 @@ CLASS lcl_diff IMPLEMENTATION.
       APPEND lo_regex TO lt_regex_set.
     END-OF-DEFINITION.
 
-    DATA: lv_beacon_idx  TYPE i,
-          lv_offs        TYPE i,
-          lv_beacon_str  TYPE string,
-          lv_beacon_2lev TYPE string,
-          lv_submatch    TYPE string,
-          lo_regex       TYPE REF TO cl_abap_regex,
-          lt_regex_set   TYPE TABLE OF REF TO cl_abap_regex.
+    DATA: lv_beacon    TYPE i,
+          lv_offs      TYPE i,
+          lv_code_line TYPE string,
+          lo_regex     TYPE REF TO cl_abap_regex,
+          lt_regex_set TYPE TABLE OF REF TO cl_abap_regex.
 
     FIELD-SYMBOLS: <ls_diff> LIKE LINE OF mt_diff.
 
 
-    _add_regex '^\s*(CLASS|FORM|MODULE|REPORT|METHOD)\s'.
+    _add_regex '^\s*(CLASS|FORM|MODULE|REPORT)\s'.
     _add_regex '^\s*START-OF-'.
     _add_regex '^\s*INITIALIZATION(\s|\.)'.
 
     LOOP AT mt_diff ASSIGNING <ls_diff>.
-
-      CLEAR lv_offs.
-      <ls_diff>-beacon = lv_beacon_idx.
-
-      LOOP AT lt_regex_set INTO lo_regex. "
-        FIND FIRST OCCURRENCE OF REGEX lo_regex IN <ls_diff>-new SUBMATCHES lv_submatch.
+      <ls_diff>-beacon = lv_beacon.
+      LOOP AT lt_regex_set INTO lo_regex.
+        FIND FIRST OCCURRENCE OF REGEX lo_regex IN <ls_diff>-new.
         IF sy-subrc = 0. " Match
-          lv_beacon_str = <ls_diff>-new.
-          lv_submatch = to_upper( lv_submatch ).
+          lv_code_line = <ls_diff>-new.
 
-          " Get rid of comments and end of line
-          FIND FIRST OCCURRENCE OF '.' IN lv_beacon_str MATCH OFFSET lv_offs.
-          IF sy-subrc <> 0.
-            FIND FIRST OCCURRENCE OF '"' IN lv_beacon_str MATCH OFFSET lv_offs.
+          " Get rid of comments
+          FIND FIRST OCCURRENCE OF '.' IN lv_code_line MATCH OFFSET lv_offs.
+          IF sy-subrc = 0.
+            lv_code_line = lv_code_line(lv_offs).
           ENDIF.
 
-          IF lv_offs > 0.
-            lv_beacon_str = lv_beacon_str(lv_offs).
-          ENDIF.
-
-          IF lv_submatch = 'CLASS'.
-            lv_beacon_2lev = lv_beacon_str.
-          ELSEIF lv_submatch = 'METHOD'.
-            lv_beacon_str = lv_beacon_2lev && ` => ` && lv_beacon_str.
-          ENDIF.
-
-          APPEND lv_beacon_str TO mt_beacons.
-          lv_beacon_idx    = sy-tabix.
-          <ls_diff>-beacon = lv_beacon_idx.
+          APPEND lv_code_line TO mt_beacons.
+          lv_beacon        = sy-tabix.
+          <ls_diff>-beacon = lv_beacon.
           EXIT. "Loop
         ENDIF.
       ENDLOOP.
@@ -5583,11 +5567,6 @@ CLASS ltcl_dot_abapgit DEFINITION DEFERRED.
 CLASS lcl_dot_abapgit DEFINITION CREATE PRIVATE FINAL FRIENDS ltcl_dot_abapgit.
 
   PUBLIC SECTION.
-    CONSTANTS: BEGIN OF c_folder_logic,
-                 prefix TYPE string VALUE 'PREFIX',
-                 full   TYPE string VALUE 'FULL',
-               END OF c_folder_logic.
-
     CLASS-METHODS:
       build_default
         IMPORTING iv_master_language    TYPE spras
@@ -5613,12 +5592,8 @@ CLASS lcl_dot_abapgit DEFINITION CREATE PRIVATE FINAL FRIENDS ltcl_dot_abapgit.
                   iv_filename TYPE string,
       get_starting_folder
         RETURNING VALUE(rv_path) TYPE string,
-      get_folder_logic
-        RETURNING VALUE(rv_logic) TYPE string,
-      set_folder_logic
-        IMPORTING iv_logic TYPE string,
-      set_starting_folder
-        IMPORTING iv_path TYPE string,
+*      set_starting_folder
+*        IMPORTING iv_path TYPE string,
       get_master_language
         RETURNING VALUE(rv_language) TYPE spras,
 *      set_master_language
@@ -5631,7 +5606,6 @@ CLASS lcl_dot_abapgit DEFINITION CREATE PRIVATE FINAL FRIENDS ltcl_dot_abapgit.
     TYPES: BEGIN OF ty_dot_abapgit,
              master_language TYPE spras,
              starting_folder TYPE string,
-             folder_logic    TYPE string,
              ignore          TYPE STANDARD TABLE OF string WITH DEFAULT KEY,
            END OF ty_dot_abapgit.
 
@@ -5691,8 +5665,6 @@ CLASS lcl_dot_abapgit IMPLEMENTATION.
 
     ls_data-master_language = iv_master_language.
     ls_data-starting_folder = '/'.
-    ls_data-folder_logic    = c_folder_logic-prefix.
-
     APPEND '/.gitignore' TO ls_data-ignore.
     APPEND '/LICENSE' TO ls_data-ignore.
     APPEND '/README.md' TO ls_data-ignore.
@@ -5706,7 +5678,6 @@ CLASS lcl_dot_abapgit IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD to_xml.
-
     CALL TRANSFORMATION id
       SOURCE data = is_data
       RESULT XML rv_xml.
@@ -5718,7 +5689,6 @@ CLASS lcl_dot_abapgit IMPLEMENTATION.
       IN rv_xml
       WITH '<?xml version="1.0" encoding="utf-8"?>'.
     ASSERT sy-subrc = 0.
-
   ENDMETHOD.
 
   METHOD from_xml.
@@ -5735,12 +5705,6 @@ CLASS lcl_dot_abapgit IMPLEMENTATION.
       OPTIONS value_handling = 'accept_data_loss'
       SOURCE XML lv_xml
       RESULT data = rs_data ##NO_TEXT.
-
-* downward compatibility
-    IF rs_data-folder_logic IS INITIAL.
-      rs_data-folder_logic = c_folder_logic-prefix.
-    ENDIF.
-
   ENDMETHOD.
 
   METHOD add_ignore.
@@ -5794,17 +5758,9 @@ CLASS lcl_dot_abapgit IMPLEMENTATION.
     rv_path = ms_data-starting_folder.
   ENDMETHOD.
 
-  METHOD get_folder_logic.
-    rv_logic = ms_data-folder_logic.
-  ENDMETHOD.
-
-  METHOD set_folder_logic.
-    ms_data-folder_logic = iv_logic.
-  ENDMETHOD.
-
-  METHOD set_starting_folder.
-    ms_data-starting_folder = iv_path.
-  ENDMETHOD.
+*  METHOD set_starting_folder.
+*    ms_data-starting_folder = iv_path.
+*  ENDMETHOD.
 
   METHOD get_master_language.
     rv_language = ms_data-master_language.
@@ -5833,65 +5789,50 @@ ENDCLASS.
 *&  Include           ZABAPGIT_SAP_PACKAGE
 *&---------------------------------------------------------------------*
 
-INTERFACE lif_sap_package.
-
-  TYPES: ty_devclass_tt TYPE STANDARD TABLE OF devclass WITH DEFAULT KEY.
-
-  METHODS:
-    list_subpackages
-      RETURNING VALUE(rt_list) TYPE ty_devclass_tt,
-    list_superpackages
-      RETURNING VALUE(rt_list) TYPE ty_devclass_tt,
-    read_parent
-      RETURNING VALUE(rv_parentcl) TYPE tdevc-parentcl,
-    create_child
-      IMPORTING iv_child TYPE devclass
-      RAISING   lcx_exception,
-    exists
-      RETURNING VALUE(rv_bool) TYPE abap_bool.
-
-ENDINTERFACE.
-
-CLASS ltcl_folder_logic DEFINITION DEFERRED.
-CLASS ltcl_folder_logic_namespaces DEFINITION DEFERRED.
-
 *----------------------------------------------------------------------*
 *       CLASS lcl_package DEFINITION
 *----------------------------------------------------------------------*
 *
 *----------------------------------------------------------------------*
-CLASS lcl_sap_package DEFINITION FINAL CREATE PRIVATE
-    FRIENDS
-    ltcl_folder_logic
-    ltcl_folder_logic_namespaces.
+CLASS lcl_sap_package DEFINITION FINAL.
 
   PUBLIC SECTION.
+    TYPES: ty_devclass_tt TYPE STANDARD TABLE OF devclass WITH DEFAULT KEY.
+
     CLASS-METHODS:
-      get
-        IMPORTING iv_package TYPE devclass
-        RETURNING VALUE(ri_package) TYPE REF TO lif_sap_package,
-      create
-        IMPORTING is_package TYPE scompkdtln
-        RAISING   lcx_exception,
+      check
+        IMPORTING io_log     TYPE REF TO lcl_log
+                  it_results TYPE ty_results_tt
+                  iv_start   TYPE string
+                  iv_top     TYPE devclass,
+      list_subpackages IMPORTING iv_package     TYPE devclass
+                       RETURNING VALUE(rt_list) TYPE ty_devclass_tt,
+      list_superpackages IMPORTING iv_package     TYPE devclass
+                         RETURNING VALUE(rt_list) TYPE ty_devclass_tt,
       create_local
         IMPORTING iv_package TYPE devclass
-        RAISING   lcx_exception.
-
-    METHODS:
-      constructor
-        IMPORTING iv_package TYPE devclass.
-
-    INTERFACES: lif_sap_package.
+        RAISING   lcx_exception,
+      create
+        IMPORTING is_package        TYPE scompkdtln
+        RETURNING VALUE(ri_package) TYPE REF TO if_package
+        RAISING   lcx_exception,
+      create_child
+        IMPORTING iv_parent TYPE devclass
+                  iv_child  TYPE devclass
+        RAISING   lcx_exception,
+      exists
+        IMPORTING iv_package     TYPE devclass
+        RETURNING VALUE(rv_bool) TYPE abap_bool.
 
   PRIVATE SECTION.
-    TYPES: BEGIN OF ty_injected,
-             package TYPE devclass,
-             object  TYPE REF TO lif_sap_package,
-           END OF ty_injected.
-
-    CLASS-DATA: gt_injected TYPE STANDARD TABLE OF ty_injected.
-
-    DATA: mv_package TYPE devclass.
+    CLASS-METHODS:
+      class_to_path
+        IMPORTING
+          iv_top         TYPE devclass
+          iv_start       TYPE string
+          iv_package     TYPE devclass
+        RETURNING
+          VALUE(rv_path) TYPE string.
 
 ENDCLASS.                    "lcl_package DEFINITION
 
@@ -5902,31 +5843,134 @@ ENDCLASS.                    "lcl_package DEFINITION
 *----------------------------------------------------------------------*
 CLASS lcl_sap_package IMPLEMENTATION.
 
-  METHOD get.
+  METHOD class_to_path.
 
-    FIELD-SYMBOLS: <ls_injected> LIKE LINE OF gt_injected.
+    DATA: lv_len      TYPE i,
+          lv_path     TYPE string,
+          lv_parentcl TYPE tdevc-parentcl.
 
-    IF lines( gt_injected ) > 0.
-      READ TABLE gt_injected ASSIGNING <ls_injected> WITH KEY package = iv_package.
-      ASSERT sy-subrc = 0. " unit test should be in control
-      ri_package = <ls_injected>-object.
+
+    IF iv_top = iv_package.
+      rv_path = iv_start.
     ELSE.
-      CREATE OBJECT ri_package TYPE lcl_sap_package
-        EXPORTING
-          iv_package = iv_package.
+      SELECT SINGLE parentcl FROM tdevc INTO lv_parentcl
+        WHERE devclass = iv_package.      "#EC CI_SUBRC "#EC CI_GENBUFF
+      ASSERT sy-subrc = 0.
+
+      IF lv_parentcl IS INITIAL.
+        rv_path = 'error' ##no_text.
+      ELSE.
+        lv_len = strlen( lv_parentcl ).
+        lv_path = iv_package+lv_len.
+        IF strlen( lv_path ) = 0.
+          RETURN. " prevent dump
+        ENDIF.
+        IF lv_path(1) = '_'.
+          lv_path = lv_path+1.
+        ENDIF.
+        TRANSLATE lv_path TO LOWER CASE.
+        CONCATENATE lv_path '/' INTO lv_path.
+
+        rv_path = class_to_path( iv_top     = iv_top
+                                 iv_start   = iv_start
+                                 iv_package = lv_parentcl ).
+
+        CONCATENATE rv_path lv_path INTO rv_path.
+
+      ENDIF.
+
     ENDIF.
 
-  ENDMETHOD.
+  ENDMETHOD.                    "class_to_path
 
-  METHOD constructor.
-    mv_package = iv_package.
-  ENDMETHOD.
+  METHOD check.
 
-  METHOD lif_sap_package~exists.
+    DATA: lv_path     TYPE string,
+          ls_item     TYPE ty_item,
+          ls_file     TYPE ty_file_signature,
+          lt_res_sort LIKE it_results,
+          lt_item_idx LIKE it_results.
+
+    FIELD-SYMBOLS: <ls_res1> LIKE LINE OF it_results,
+                   <ls_res2> LIKE LINE OF it_results.
+
+
+    IF io_log IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " Collect object indexe
+    lt_res_sort = it_results.
+    SORT lt_res_sort BY obj_type ASCENDING obj_name ASCENDING.
+
+    LOOP AT it_results ASSIGNING <ls_res1> WHERE NOT obj_type IS INITIAL.
+      IF NOT ( <ls_res1>-obj_type = ls_item-obj_type
+          AND <ls_res1>-obj_name = ls_item-obj_name ).
+        APPEND INITIAL LINE TO lt_item_idx ASSIGNING <ls_res2>.
+        <ls_res2>-obj_type = <ls_res1>-obj_type.
+        <ls_res2>-obj_name = <ls_res1>-obj_name.
+        <ls_res2>-path     = <ls_res1>-path.
+        MOVE-CORRESPONDING <ls_res1> TO ls_item.
+      ENDIF.
+    ENDLOOP.
+
+    " Check files for one object is in the same folder
+
+    LOOP AT it_results ASSIGNING <ls_res1> WHERE NOT obj_type IS INITIAL.
+      READ TABLE lt_item_idx ASSIGNING <ls_res2>
+        WITH KEY obj_type = <ls_res1>-obj_type obj_name = <ls_res1>-obj_name
+        BINARY SEARCH. " Sorted above
+
+      IF sy-subrc <> 0 OR <ls_res1>-path <> <ls_res2>-path. " All paths are same
+        io_log->add( iv_msgv1 = 'Files for object'
+                     iv_msgv2 = <ls_res1>-obj_type
+                     iv_msgv3 = <ls_res1>-obj_name
+                     iv_msgv4 = 'are not placed in the same folder'
+                     iv_rc    = '1' ) ##no_text.
+      ENDIF.
+    ENDLOOP.
+
+    " Check that objects are created in package corresponding to folder
+    LOOP AT it_results ASSIGNING <ls_res1>
+        WHERE NOT package IS INITIAL AND NOT path IS INITIAL.
+      lv_path = class_to_path( iv_top     = iv_top
+                               iv_start   = iv_start
+                               iv_package = <ls_res1>-package ).
+      IF lv_path <> <ls_res1>-path.
+        io_log->add( iv_msgv1 = 'Package and path does not match for object,'
+                     iv_msgv2 = <ls_res1>-obj_type
+                     iv_msgv3 = <ls_res1>-obj_name
+                     iv_rc    = '2' ) ##no_text.
+      ENDIF.
+    ENDLOOP.
+
+    " Check for multiple files with same filename
+    SORT lt_res_sort BY filename ASCENDING.
+
+    LOOP AT lt_res_sort ASSIGNING <ls_res1>.
+      IF <ls_res1>-filename IS NOT INITIAL AND <ls_res1>-filename = ls_file-filename.
+        io_log->add( iv_msgv1 = 'Multiple files with same filename,'
+                     iv_msgv2 = <ls_res1>-filename
+                     iv_rc    = '3' ) ##no_text.
+      ENDIF.
+
+      IF <ls_res1>-filename IS INITIAL.
+        io_log->add( iv_msgv1 = 'Filename is empty for object'
+                     iv_msgv2 = <ls_res1>-obj_type
+                     iv_msgv3 = <ls_res1>-obj_name
+                     iv_rc    = '4' ) ##no_text.
+      ENDIF.
+
+      MOVE-CORRESPONDING <ls_res1> TO ls_file.
+    ENDLOOP.
+
+  ENDMETHOD.                    "check
+
+  METHOD exists.
 
     cl_package_factory=>load_package(
       EXPORTING
-        i_package_name             = mv_package
+        i_package_name             = iv_package
       EXCEPTIONS
         object_not_existing        = 1
         unexpected_error           = 2
@@ -5937,7 +5981,7 @@ CLASS lcl_sap_package IMPLEMENTATION.
 
   ENDMETHOD.
 
-  METHOD lif_sap_package~create_child.
+  METHOD create_child.
 
     DATA: li_parent TYPE REF TO if_package,
           ls_child  TYPE scompkdtln.
@@ -5945,7 +5989,7 @@ CLASS lcl_sap_package IMPLEMENTATION.
 
     cl_package_factory=>load_package(
       EXPORTING
-        i_package_name             = mv_package
+        i_package_name             = iv_parent
       IMPORTING
         e_package                  = li_parent
       EXCEPTIONS
@@ -5961,7 +6005,7 @@ CLASS lcl_sap_package IMPLEMENTATION.
     ls_child-devclass  = iv_child.
     ls_child-dlvunit   = li_parent->software_component.
     ls_child-ctext     = iv_child.
-    ls_child-parentcl  = mv_package.
+    ls_child-parentcl  = iv_parent.
     ls_child-pdevclass = li_parent->transport_layer.
     ls_child-as4user   = sy-uname.
 
@@ -5972,7 +6016,6 @@ CLASS lcl_sap_package IMPLEMENTATION.
   METHOD create.
 
     DATA: lv_err     TYPE string,
-          li_package TYPE REF TO if_package,
           ls_package LIKE is_package.
 
 
@@ -6004,7 +6047,7 @@ CLASS lcl_sap_package IMPLEMENTATION.
         i_reuse_deleted_object     = abap_true
 *        i_suppress_dialog          = abap_true " does not exist in 730
       IMPORTING
-        e_package                  = li_package
+        e_package                  = ri_package
       CHANGING
         c_package_data             = ls_package
       EXCEPTIONS
@@ -6034,7 +6077,7 @@ CLASS lcl_sap_package IMPLEMENTATION.
       lcx_exception=>raise( |Package { is_package-devclass } could not be created| ).
     ENDIF.
 
-    li_package->save(
+    ri_package->save(
 *      EXPORTING
 *        i_suppress_dialog     = abap_true    " Controls whether popups can be transmitted
       EXCEPTIONS
@@ -6051,50 +6094,42 @@ CLASS lcl_sap_package IMPLEMENTATION.
       lcx_exception=>raise( lv_err ).
     ENDIF.
 
-    li_package->set_changeable( abap_false ).
+    ri_package->set_changeable( abap_false ).
 
   ENDMETHOD.
 
-  METHOD lif_sap_package~read_parent.
-
-    SELECT SINGLE parentcl FROM tdevc INTO rv_parentcl
-      WHERE devclass = mv_package.        "#EC CI_SUBRC "#EC CI_GENBUFF
-    ASSERT sy-subrc = 0.
-
-  ENDMETHOD.
-
-  METHOD lif_sap_package~list_superpackages.
+  METHOD list_superpackages.
 
     DATA: lt_list     LIKE rt_list,
           lv_parent   TYPE tdevc-parentcl,
           lv_devclass LIKE LINE OF rt_list.
 
 
-    APPEND mv_package TO rt_list.
+    APPEND iv_package TO rt_list.
 
     SELECT SINGLE parentcl INTO lv_parent
-      FROM tdevc WHERE devclass = mv_package.           "#EC CI_GENBUFF
+      FROM tdevc WHERE devclass = iv_package.           "#EC CI_GENBUFF
 
     IF NOT lv_parent IS INITIAL.
       APPEND lv_parent TO rt_list.
-      lt_list = get( lv_devclass )->list_superpackages( ).
+      lt_list = list_superpackages( lv_devclass ).
       APPEND LINES OF lt_list TO rt_list.
     ENDIF.
 
   ENDMETHOD.
 
-  METHOD lif_sap_package~list_subpackages.
+  METHOD list_subpackages.
 
     DATA: lt_list     LIKE rt_list,
           lv_devclass LIKE LINE OF rt_list.
 
 
     SELECT devclass INTO TABLE rt_list
-      FROM tdevc WHERE parentcl = mv_package.           "#EC CI_GENBUFF
+      FROM tdevc WHERE parentcl = iv_package.           "#EC CI_GENBUFF
 
 * note the recursion, since packages are added to the list
     LOOP AT rt_list INTO lv_devclass.
-      lt_list = get( lv_devclass )->list_subpackages( ).
+      lt_list = list_subpackages( lv_devclass ).
       APPEND LINES OF lt_list TO rt_list.
     ENDLOOP.
 
@@ -6116,408 +6151,6 @@ CLASS lcl_sap_package IMPLEMENTATION.
   ENDMETHOD.                    "create
 
 ENDCLASS.                    "lcl_package IMPLEMENTATION
-
-
-****************************************************
-* abapmerge - ZABAPGIT_FOLDER_LOGIC
-****************************************************
-*&---------------------------------------------------------------------*
-*&  Include           ZABAPGIT_FOLDER_LOGIC
-*&---------------------------------------------------------------------*
-
-CLASS lcl_folder_logic DEFINITION.
-
-  PUBLIC SECTION.
-    CLASS-METHODS:
-      package_to_path
-        IMPORTING
-          iv_top         TYPE devclass
-          io_dot         TYPE REF TO lcl_dot_abapgit
-          iv_package     TYPE devclass
-        RETURNING
-          VALUE(rv_path) TYPE string
-        RAISING lcx_exception,
-      path_to_package
-        IMPORTING
-          iv_top            TYPE devclass
-          io_dot            TYPE REF TO lcl_dot_abapgit
-          iv_path           TYPE string
-        RETURNING
-          VALUE(rv_package) TYPE devclass
-        RAISING
-          lcx_exception.
-
-ENDCLASS.
-
-CLASS lcl_folder_logic IMPLEMENTATION.
-
-  METHOD path_to_package.
-
-    DATA: lv_length TYPE i,
-          lv_parent TYPE devclass,
-          lv_new    TYPE string,
-          lv_path   TYPE string.
-
-
-    lv_length  = strlen( io_dot->get_starting_folder( ) ).
-    lv_path    = iv_path+lv_length.
-    lv_parent  = iv_top.
-    rv_package = iv_top.
-
-    WHILE lv_path CA '/'.
-      SPLIT lv_path AT '/' INTO lv_new lv_path.
-
-      CASE io_dot->get_folder_logic( ).
-        WHEN lcl_dot_abapgit=>c_folder_logic-full.
-          rv_package = lv_new.
-          TRANSLATE rv_package USING '#/'.
-          IF iv_top(1) = '$'.
-            CONCATENATE '$' rv_package INTO rv_package.
-          ENDIF.
-        WHEN lcl_dot_abapgit=>c_folder_logic-prefix.
-          CONCATENATE rv_package '_' lv_new INTO rv_package.
-        WHEN OTHERS.
-          ASSERT 0 = 1.
-      ENDCASE.
-
-      TRANSLATE rv_package TO UPPER CASE.
-
-      IF lcl_sap_package=>get( rv_package )->exists( ) = abap_false.
-        lcl_sap_package=>get( lv_parent )->create_child( rv_package ).
-      ENDIF.
-
-      lv_parent = rv_package.
-    ENDWHILE.
-
-
-  ENDMETHOD.
-
-  METHOD package_to_path.
-
-    DATA: lv_len      TYPE i,
-          lv_path     TYPE string,
-          lv_message  TYPE string,
-          lv_parentcl TYPE tdevc-parentcl.
-
-
-    IF iv_top = iv_package.
-      rv_path = io_dot->get_starting_folder( ).
-    ELSE.
-      lv_parentcl = lcl_sap_package=>get( iv_package )->read_parent( ).
-
-      IF lv_parentcl IS INITIAL.
-        lcx_exception=>raise( 'error, expected parent package' ).
-      ELSE.
-        CASE io_dot->get_folder_logic( ).
-          WHEN lcl_dot_abapgit=>c_folder_logic-full.
-            lv_len = 0.
-            IF iv_package(1) = '$'.
-              lv_len = 1.
-            ENDIF.
-          WHEN lcl_dot_abapgit=>c_folder_logic-prefix.
-            lv_len = strlen( lv_parentcl ).
-
-            IF iv_package(lv_len) <> lv_parentcl.
-* if abapGit project is installed in package ZZZ, all subpackages should be named
-* ZZZ_something. This will define the folder name in the zip file to be "something",
-* similarily with online projects. Alternatively change to FULL folder logic
-              lv_message = 'PREFIX: Unexpected package naming(' && iv_package && ')' ##no_text.
-              lcx_exception=>raise( lv_message ).
-            ENDIF.
-          WHEN OTHERS.
-            ASSERT 0 = 1.
-        ENDCASE.
-
-        lv_path = iv_package+lv_len.
-        IF strlen( lv_path ) = 0.
-          lcx_exception=>raise( 'Folder logic: length = 0' ).
-        ENDIF.
-
-        IF lv_path(1) = '_'.
-          lv_path = lv_path+1.
-        ENDIF.
-
-        TRANSLATE lv_path USING '/#'.
-        TRANSLATE lv_path TO LOWER CASE.
-        CONCATENATE lv_path '/' INTO lv_path.
-
-        rv_path = package_to_path( iv_top     = iv_top
-                                   io_dot     = io_dot
-                                   iv_package = lv_parentcl ).
-
-        CONCATENATE rv_path lv_path INTO rv_path.
-      ENDIF.
-    ENDIF.
-
-  ENDMETHOD.                    "class_to_path
-
-ENDCLASS.
-
-CLASS ltcl_folder_logic_helper DEFINITION FOR TESTING FINAL.
-
-  PUBLIC SECTION.
-    CLASS-METHODS: test
-            IMPORTING
-              iv_starting TYPE string
-              iv_top      TYPE devclass
-              iv_logic    TYPE string
-              iv_package  TYPE devclass
-              iv_path     TYPE string
-            RAISING lcx_exception.
-
-ENDCLASS.
-
-CLASS ltcl_folder_logic_helper IMPLEMENTATION.
-
-  METHOD test.
-
-    DATA: lv_path    TYPE string,
-          lv_package TYPE devclass,
-          lo_dot     TYPE REF TO lcl_dot_abapgit.
-
-
-    lo_dot = lcl_dot_abapgit=>build_default( sy-langu ).
-    lo_dot->set_starting_folder( iv_starting ).
-    lo_dot->set_folder_logic( iv_logic ).
-
-    lv_package = lcl_folder_logic=>path_to_package(
-      iv_top  = iv_top
-      io_dot  = lo_dot
-      iv_path = iv_path ).
-
-    lv_path = lcl_folder_logic=>package_to_path(
-      iv_top     = iv_top
-      io_dot     = lo_dot
-      iv_package = iv_package ).
-
-    cl_abap_unit_assert=>assert_equals(
-      act = lv_package
-      exp = iv_package ).
-
-    cl_abap_unit_assert=>assert_equals(
-      act = lv_path
-      exp = iv_path ).
-
-  ENDMETHOD.
-
-ENDCLASS.
-
-CLASS ltcl_folder_logic DEFINITION FOR TESTING RISK LEVEL HARMLESS DURATION SHORT FINAL.
-
-  PUBLIC SECTION.
-    INTERFACES: lif_sap_package.
-
-  PRIVATE SECTION.
-    CONSTANTS: lc_top TYPE devclass VALUE '$TOP',
-               lc_src TYPE string VALUE '/src/'.
-
-    METHODS:
-      setup,
-      teardown,
-      prefix1 FOR TESTING RAISING lcx_exception,
-      prefix2 FOR TESTING RAISING lcx_exception,
-      prefix_error1 FOR TESTING RAISING lcx_exception,
-      full1 FOR TESTING RAISING lcx_exception,
-      full2 FOR TESTING RAISING lcx_exception.
-
-ENDCLASS.                    "ltcl_convert DEFINITION
-
-CLASS ltcl_folder_logic IMPLEMENTATION.
-
-  METHOD lif_sap_package~list_subpackages.
-    RETURN.
-  ENDMETHOD.
-
-  METHOD lif_sap_package~list_superpackages.
-    RETURN.
-  ENDMETHOD.
-
-  METHOD lif_sap_package~read_parent.
-    rv_parentcl = '$TOP'.
-  ENDMETHOD.
-
-  METHOD lif_sap_package~create_child.
-    RETURN.
-  ENDMETHOD.
-
-  METHOD lif_sap_package~exists.
-    rv_bool = abap_true.
-  ENDMETHOD.
-
-  METHOD setup.
-    FIELD-SYMBOLS: <ls_inject> LIKE LINE OF lcl_sap_package=>gt_injected.
-
-    CLEAR lcl_sap_package=>gt_injected.
-
-    APPEND INITIAL LINE TO lcl_sap_package=>gt_injected ASSIGNING <ls_inject>.
-    <ls_inject>-package = '$TOP'.
-    <ls_inject>-object  = me.
-
-    APPEND INITIAL LINE TO lcl_sap_package=>gt_injected ASSIGNING <ls_inject>.
-    <ls_inject>-package = '$TOP_FOO'.
-    <ls_inject>-object  = me.
-
-    APPEND INITIAL LINE TO lcl_sap_package=>gt_injected ASSIGNING <ls_inject>.
-    <ls_inject>-package = '$FOOBAR'.
-    <ls_inject>-object  = me.
-  ENDMETHOD.
-
-  METHOD teardown.
-    CLEAR lcl_sap_package=>gt_injected.
-  ENDMETHOD.
-
-  METHOD prefix1.
-    ltcl_folder_logic_helper=>test(
-      iv_starting = lc_src
-      iv_top      = lc_top
-      iv_logic    = lcl_dot_abapgit=>c_folder_logic-prefix
-      iv_package  = lc_top
-      iv_path     = lc_src ).
-  ENDMETHOD.
-
-  METHOD prefix2.
-    ltcl_folder_logic_helper=>test(
-      iv_starting = lc_src
-      iv_top      = lc_top
-      iv_logic    = lcl_dot_abapgit=>c_folder_logic-prefix
-      iv_package  = '$TOP_FOO'
-      iv_path     = '/src/foo/' ).
-  ENDMETHOD.
-
-  METHOD prefix_error1.
-* PREFIX mode, top package is $TOP, so all subpackages should be named $TOP_something
-    TRY.
-        ltcl_folder_logic_helper=>test(
-          iv_starting = lc_src
-          iv_top      = lc_top
-          iv_logic    = lcl_dot_abapgit=>c_folder_logic-prefix
-          iv_package  = '$FOOBAR'
-          iv_path     = '/src/' ).
-        cl_abap_unit_assert=>fail( 'Error expected' ).
-      CATCH lcx_exception.
-    ENDTRY.
-  ENDMETHOD.
-
-  METHOD full1.
-    ltcl_folder_logic_helper=>test(
-      iv_starting = lc_src
-      iv_top      = lc_top
-      iv_logic    = lcl_dot_abapgit=>c_folder_logic-full
-      iv_package  = lc_top
-      iv_path     = lc_src ).
-  ENDMETHOD.
-
-  METHOD full2.
-    ltcl_folder_logic_helper=>test(
-      iv_starting = lc_src
-      iv_top      = lc_top
-      iv_logic    = lcl_dot_abapgit=>c_folder_logic-full
-      iv_package  = '$TOP_FOO'
-      iv_path     = '/src/top_foo/' ).
-  ENDMETHOD.
-
-ENDCLASS.
-
-CLASS ltcl_folder_logic_namespaces DEFINITION FOR TESTING RISK LEVEL HARMLESS DURATION SHORT FINAL.
-
-  PUBLIC SECTION.
-    INTERFACES: lif_sap_package.
-
-  PRIVATE SECTION.
-    CONSTANTS: lc_top TYPE devclass VALUE '/TEST/TOOLS',
-               lc_src TYPE string VALUE '/src/'.
-
-    METHODS:
-      setup,
-      teardown,
-      prefix1 FOR TESTING RAISING lcx_exception,
-      prefix2 FOR TESTING RAISING lcx_exception,
-      full1 FOR TESTING RAISING lcx_exception,
-      full2 FOR TESTING RAISING lcx_exception.
-
-ENDCLASS.                    "ltcl_convert DEFINITION
-
-CLASS ltcl_folder_logic_namespaces IMPLEMENTATION.
-
-  METHOD lif_sap_package~list_subpackages.
-    RETURN.
-  ENDMETHOD.
-
-  METHOD lif_sap_package~list_superpackages.
-    RETURN.
-  ENDMETHOD.
-
-  METHOD lif_sap_package~read_parent.
-    rv_parentcl = lc_top.
-  ENDMETHOD.
-
-  METHOD lif_sap_package~create_child.
-    RETURN.
-  ENDMETHOD.
-
-  METHOD lif_sap_package~exists.
-    rv_bool = abap_true.
-  ENDMETHOD.
-
-  METHOD setup.
-    FIELD-SYMBOLS: <ls_inject> LIKE LINE OF lcl_sap_package=>gt_injected.
-
-    CLEAR lcl_sap_package=>gt_injected.
-
-    APPEND INITIAL LINE TO lcl_sap_package=>gt_injected ASSIGNING <ls_inject>.
-    <ls_inject>-package = '/TEST/TOOLS'.
-    <ls_inject>-object  = me.
-
-    APPEND INITIAL LINE TO lcl_sap_package=>gt_injected ASSIGNING <ls_inject>.
-    <ls_inject>-package = '/TEST/T1'.
-    <ls_inject>-object  = me.
-
-    APPEND INITIAL LINE TO lcl_sap_package=>gt_injected ASSIGNING <ls_inject>.
-    <ls_inject>-package = '/TEST/TOOLS_T1'.
-    <ls_inject>-object  = me.
-  ENDMETHOD.
-
-  METHOD teardown.
-    CLEAR lcl_sap_package=>gt_injected.
-  ENDMETHOD.
-
-  METHOD prefix1.
-    ltcl_folder_logic_helper=>test(
-      iv_starting = lc_src
-      iv_top      = lc_top
-      iv_logic    = lcl_dot_abapgit=>c_folder_logic-prefix
-      iv_package  = lc_top
-      iv_path     = lc_src ).
-  ENDMETHOD.
-
-  METHOD prefix2.
-    ltcl_folder_logic_helper=>test(
-      iv_starting = lc_src
-      iv_top      = lc_top
-      iv_logic    = lcl_dot_abapgit=>c_folder_logic-prefix
-      iv_package  = '/TEST/TOOLS_T1'
-      iv_path     = '/src/t1/' ).
-  ENDMETHOD.
-
-  METHOD full1.
-    ltcl_folder_logic_helper=>test(
-      iv_starting = lc_src
-      iv_top      = lc_top
-      iv_logic    = lcl_dot_abapgit=>c_folder_logic-full
-      iv_package  = lc_top
-      iv_path     = lc_src ).
-  ENDMETHOD.
-
-  METHOD full2.
-    ltcl_folder_logic_helper=>test(
-      iv_starting = lc_src
-      iv_top      = lc_top
-      iv_logic    = lcl_dot_abapgit=>c_folder_logic-full
-      iv_package  = '/TEST/T1'
-      iv_path     = '/src/#test#t1/' ).
-  ENDMETHOD.
-
-ENDCLASS.
 
 
 
@@ -8116,10 +7749,6 @@ CLASS lcl_2fa_authenticator_registry DEFINITION
                                         WITH UNIQUE KEY table_line READ-ONLY.
   PROTECTED SECTION.
   PRIVATE SECTION.
-    CLASS-METHODS:
-      popup_token
-        RETURNING VALUE(rv_token) TYPE string
-        RAISING lcx_exception.
 ENDCLASS.
 
 CLASS lcl_2fa_authenticator_registry IMPLEMENTATION.
@@ -8161,6 +7790,7 @@ CLASS lcl_2fa_authenticator_registry IMPLEMENTATION.
   METHOD use_2fa_if_required.
     DATA: li_authenticator TYPE REF TO lif_2fa_authenticator,
           lv_2fa_token     TYPE string,
+          lv_use_2fa       TYPE abap_bool,
           lv_access_token  TYPE string,
           lx_ex            TYPE REF TO cx_root.
 
@@ -8177,7 +7807,16 @@ CLASS lcl_2fa_authenticator_registry IMPLEMENTATION.
                                               iv_username = cv_username
                                               iv_password = cv_password ) = abap_true.
 
-          lv_2fa_token = popup_token( ).
+          " Get a 2FA token (app/sms)
+          CALL FUNCTION 'POPUP_GET_STRING'
+            EXPORTING
+              label = 'Two factor auth. token'
+            IMPORTING
+              value = lv_2fa_token
+              okay  = lv_use_2fa.
+          IF lv_use_2fa = abap_false.
+            lcx_exception=>raise( 'Authentication cancelled' ).
+          ENDIF.
 
           " Delete an old access token if it exists
           li_authenticator->delete_access_tokens( iv_url       = iv_url
@@ -8209,45 +7848,6 @@ CLASS lcl_2fa_authenticator_registry IMPLEMENTATION.
             ix_previous = lx_ex.
     ENDTRY.
   ENDMETHOD.
-
-  METHOD popup_token.
-
-    DATA: lv_returncode TYPE c,
-          lt_fields     TYPE TABLE OF sval.
-
-    FIELD-SYMBOLS: <ls_field> LIKE LINE OF lt_fields.
-
-
-    APPEND INITIAL LINE TO lt_fields ASSIGNING <ls_field>.
-    <ls_field>-tabname   = 'TADIR'.
-    <ls_field>-fieldname = 'OBJ_NAME'.
-    <ls_field>-fieldtext = 'Two factor auth. token'.
-
-    CALL FUNCTION 'POPUP_GET_VALUES'
-      EXPORTING
-        no_value_check  = abap_true
-        popup_title     = 'Two factor auth. token'
-      IMPORTING
-        returncode      = lv_returncode
-      TABLES
-        fields          = lt_fields
-      EXCEPTIONS
-        error_in_fields = 1
-        OTHERS          = 2. "#EC NOTEXT
-    IF sy-subrc <> 0.
-      lcx_exception=>raise( 'Error from POPUP_GET_VALUES' ).
-    ENDIF.
-
-    IF lv_returncode = 'A'.
-      lcx_exception=>raise( 'Authentication cancelled' ).
-    ENDIF.
-
-    READ TABLE lt_fields INDEX 1 ASSIGNING <ls_field>.
-    ASSERT sy-subrc = 0.
-    rv_token = <ls_field>-value.
-
-  ENDMETHOD.
-
 ENDCLASS.
 
 
@@ -10044,7 +9644,7 @@ CLASS lcl_git_porcelain IMPLEMENTATION.
     DATA: lt_objects TYPE ty_objects_tt,
           lv_pack    TYPE xstring.
 
-    IF iv_name CS ` `.
+    IF iv_name CS ' '.
       lcx_exception=>raise( 'Branch name cannot contain blank spaces' ).
     ENDIF.
 
@@ -10951,9 +10551,6 @@ CLASS lcl_objects_super DEFINITION ABSTRACT.
       get_metadata
         RETURNING VALUE(rs_metadata) TYPE ty_metadata,
       corr_insert
-        IMPORTING iv_package TYPE devclass
-        RAISING   lcx_exception,
-      tadir_insert
         IMPORTING iv_package TYPE devclass
         RAISING   lcx_exception,
       jump_se11
@@ -12002,25 +11599,6 @@ CLASS lcl_objects_super IMPLEMENTATION.
     rs_metadata-version = 'v1.0.0' ##no_text.
   ENDMETHOD.                    "get_metadata
 
-  METHOD tadir_insert.
-
-    CALL FUNCTION 'TR_TADIR_INTERFACE'
-      EXPORTING
-        wi_test_modus       = abap_false
-        wi_tadir_pgmid      = 'R3TR'
-        wi_tadir_object     = ms_item-obj_type
-        wi_tadir_obj_name   = ms_item-obj_name
-        wi_tadir_author     = sy-uname
-        wi_tadir_devclass   = iv_package
-        wi_tadir_masterlang = mv_language
-      EXCEPTIONS
-        OTHERS              = 1.
-    IF sy-subrc <> 0.
-      lcx_exception=>raise( 'error from TR_TADIR_INTERFACE' ).
-    ENDIF.
-
-  ENDMETHOD.
-
   METHOD corr_insert.
 
     DATA: ls_object TYPE ddenqs.
@@ -12134,6 +11712,14 @@ CLASS lcl_objects DEFINITION FINAL.
         IMPORTING it_results        TYPE ty_results_tt
         RETURNING VALUE(rt_results) TYPE ty_results_tt.
 
+    CLASS-METHODS
+      path_to_package
+        IMPORTING iv_top            TYPE devclass
+                  iv_start          TYPE string
+                  iv_path           TYPE string
+        RETURNING VALUE(rv_package) TYPE devclass
+        RAISING   lcx_exception.
+
     CLASS-METHODS class_name
       IMPORTING is_item              TYPE ty_item
       RETURNING VALUE(rv_class_name) TYPE string.
@@ -12196,7 +11782,6 @@ CLASS lcl_tadir DEFINITION FINAL.
       read
         IMPORTING iv_package            TYPE tadir-devclass
                   iv_ignore_subpackages TYPE abap_bool DEFAULT abap_false
-                  io_dot                TYPE REF TO lcl_dot_abapgit OPTIONAL
         RETURNING VALUE(rt_tadir)       TYPE ty_tadir_tt
         RAISING   lcx_exception,
       read_single
@@ -12218,8 +11803,7 @@ CLASS lcl_tadir DEFINITION FINAL.
         RAISING   lcx_exception,
       build
         IMPORTING iv_package            TYPE tadir-devclass
-                  iv_top                TYPE tadir-devclass
-                  io_dot                TYPE REF TO lcl_dot_abapgit
+                  iv_path               TYPE string
                   iv_ignore_subpackages TYPE abap_bool DEFAULT abap_false
         RETURNING VALUE(rt_tadir)       TYPE ty_tadir_tt
         RAISING   lcx_exception.
@@ -12296,10 +11880,8 @@ CLASS lcl_tadir IMPLEMENTATION.
   METHOD read.
 
 * start recursion
-* hmm, some problems here, should TADIR also build path?
     rt_tadir = build( iv_package            = iv_package
-                      iv_top                = iv_package
-                      io_dot                = io_dot
+                      iv_path               = ''
                       iv_ignore_subpackages = iv_ignore_subpackages ).
 
     rt_tadir = check_exists( rt_tadir ).
@@ -12313,7 +11895,8 @@ CLASS lcl_tadir IMPLEMENTATION.
           lt_tdevc    TYPE STANDARD TABLE OF tdevc,
           lv_len      TYPE i,
           lv_message  TYPE string,
-          lv_path     TYPE string.
+          lv_path     TYPE string,
+          lv_category TYPE seoclassdf-category.
 
     FIELD-SYMBOLS: <ls_tdevc> LIKE LINE OF lt_tdevc,
                    <ls_tadir> LIKE LINE OF rt_tadir.
@@ -12326,25 +11909,25 @@ CLASS lcl_tadir IMPLEMENTATION.
       AND object <> 'SOTR'
       AND object <> 'SFB1'
       AND object <> 'SFB2'
-      AND object <> 'STOB' " auto generated by core data services
       AND delflag = abap_false
       ORDER BY PRIMARY KEY.               "#EC CI_GENBUFF "#EC CI_SUBRC
-
-    IF NOT io_dot IS INITIAL.
-      lv_path = lcl_folder_logic=>package_to_path(
-        iv_top     = iv_top
-        io_dot     = io_dot
-        iv_package = iv_package ).
-    ENDIF.
 
     LOOP AT rt_tadir ASSIGNING <ls_tadir>.
       lv_index = sy-tabix.
 
-      <ls_tadir>-path = lv_path.
+      <ls_tadir>-path = iv_path.
 
       CASE <ls_tadir>-object.
         WHEN 'SICF'.
           <ls_tadir>-obj_name = <ls_tadir>-obj_name(15).
+        WHEN 'INTF'.
+          SELECT SINGLE category FROM seoclassdf INTO lv_category
+            WHERE clsname = <ls_tadir>-obj_name
+            AND ( version = '1'
+            OR version = '0' ) ##warn_ok.               "#EC CI_GENBUFF
+          IF sy-subrc = 0 AND lv_category = seoc_category_webdynpro_class.
+            DELETE rt_tadir INDEX lv_index.
+          ENDIF.
       ENDCASE.
     ENDLOOP.
 
@@ -12356,9 +11939,26 @@ CLASS lcl_tadir IMPLEMENTATION.
     ENDIF.
 
     LOOP AT lt_tdevc ASSIGNING <ls_tdevc>.
+      lv_len = strlen( iv_package ).
+      IF <ls_tdevc>-devclass(lv_len) <> iv_package.
+* if abapGit project is installed in package ZZZ, all subpackages should be named
+* ZZZ_something. This will define the folder name in the zip file to be "something",
+* similarily with online projects
+        lv_message = 'Unexpected package naming(' &&
+          <ls_tdevc>-devclass && ')' ##no_text.
+        MESSAGE lv_message TYPE 'I'.
+        CONTINUE.
+      ENDIF.
+
+      lv_path = <ls_tdevc>-devclass+lv_len.
+      IF lv_path(1) = '_'.
+        lv_path = lv_path+1.
+      ENDIF.
+      TRANSLATE lv_path TO LOWER CASE.
+      CONCATENATE iv_path lv_path '/' INTO lv_path.
+
       lt_tadir = build( iv_package = <ls_tdevc>-devclass
-                        iv_top     = iv_top
-                        io_dot     = io_dot ).
+                        iv_path    = lv_path ).
       APPEND LINES OF lt_tadir TO rt_tadir.
     ENDLOOP.
 
@@ -12378,10 +11978,9 @@ ENDCLASS.                    "lcl_tadir IMPLEMENTATION
 *       CLASS lcl_file_status DEFINITION
 *----------------------------------------------------------------------*
 CLASS ltcl_file_status DEFINITION DEFERRED.
-CLASS ltcl_file_status2 DEFINITION DEFERRED.
 
 CLASS lcl_file_status DEFINITION FINAL
-  FRIENDS ltcl_file_status ltcl_file_status2.
+  FRIENDS ltcl_file_status.
 
   PUBLIC SECTION.
 
@@ -12393,19 +11992,14 @@ CLASS lcl_file_status DEFINITION FINAL
 
   PRIVATE SECTION.
 
+    CLASS-METHODS calculate_status
+      IMPORTING iv_devclass        TYPE devclass
+                it_local           TYPE ty_files_item_tt
+                it_remote          TYPE ty_files_tt
+                it_cur_state       TYPE ty_file_signatures_tt
+      RETURNING VALUE(rt_results)  TYPE ty_results_tt.
+
     CLASS-METHODS:
-      calculate_status
-        IMPORTING iv_devclass        TYPE devclass
-                  it_local           TYPE ty_files_item_tt
-                  it_remote          TYPE ty_files_tt
-                  it_cur_state       TYPE ty_file_signatures_tt
-        RETURNING VALUE(rt_results)  TYPE ty_results_tt,
-      run_checks
-        IMPORTING io_log     TYPE REF TO lcl_log
-                  it_results TYPE ty_results_tt
-                  io_dot     TYPE REF TO lcl_dot_abapgit
-                  iv_top     TYPE devclass
-        RAISING lcx_exception,
       build_existing
         IMPORTING is_local         TYPE ty_file_item
                   is_remote        TYPE ty_file
@@ -12432,89 +12026,6 @@ ENDCLASS.                    "lcl_file_status DEFINITION
 *----------------------------------------------------------------------*
 CLASS lcl_file_status IMPLEMENTATION.
 
-  METHOD run_checks.
-
-    DATA: lv_path     TYPE string,
-          ls_item     TYPE ty_item,
-          ls_file     TYPE ty_file_signature,
-          lt_res_sort LIKE it_results,
-          lt_item_idx LIKE it_results.
-
-    FIELD-SYMBOLS: <ls_res1> LIKE LINE OF it_results,
-                   <ls_res2> LIKE LINE OF it_results.
-
-
-    IF io_log IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    " Collect object indexe
-    lt_res_sort = it_results.
-    SORT lt_res_sort BY obj_type ASCENDING obj_name ASCENDING.
-
-    LOOP AT it_results ASSIGNING <ls_res1> WHERE NOT obj_type IS INITIAL.
-      IF NOT ( <ls_res1>-obj_type = ls_item-obj_type
-          AND <ls_res1>-obj_name = ls_item-obj_name ).
-        APPEND INITIAL LINE TO lt_item_idx ASSIGNING <ls_res2>.
-        <ls_res2>-obj_type = <ls_res1>-obj_type.
-        <ls_res2>-obj_name = <ls_res1>-obj_name.
-        <ls_res2>-path     = <ls_res1>-path.
-        MOVE-CORRESPONDING <ls_res1> TO ls_item.
-      ENDIF.
-    ENDLOOP.
-
-    " Check files for one object is in the same folder
-
-    LOOP AT it_results ASSIGNING <ls_res1> WHERE NOT obj_type IS INITIAL.
-      READ TABLE lt_item_idx ASSIGNING <ls_res2>
-        WITH KEY obj_type = <ls_res1>-obj_type obj_name = <ls_res1>-obj_name
-        BINARY SEARCH. " Sorted above
-
-      IF sy-subrc <> 0 OR <ls_res1>-path <> <ls_res2>-path. " All paths are same
-        io_log->add( iv_msgv1 = 'Files for object'
-                     iv_msgv2 = <ls_res1>-obj_type
-                     iv_msgv3 = <ls_res1>-obj_name
-                     iv_msgv4 = 'are not placed in the same folder'
-                     iv_rc    = '1' ) ##no_text.
-      ENDIF.
-    ENDLOOP.
-
-    " Check that objects are created in package corresponding to folder
-    LOOP AT it_results ASSIGNING <ls_res1>
-        WHERE NOT package IS INITIAL AND NOT path IS INITIAL.
-      lv_path = lcl_folder_logic=>package_to_path( iv_top     = iv_top
-                                                   io_dot     = io_dot
-                                                   iv_package = <ls_res1>-package ).
-      IF lv_path <> <ls_res1>-path.
-        io_log->add( iv_msgv1 = 'Package and path does not match for object,'
-                     iv_msgv2 = <ls_res1>-obj_type
-                     iv_msgv3 = <ls_res1>-obj_name
-                     iv_rc    = '2' ) ##no_text.
-      ENDIF.
-    ENDLOOP.
-
-    " Check for multiple files with same filename
-    SORT lt_res_sort BY filename ASCENDING.
-
-    LOOP AT lt_res_sort ASSIGNING <ls_res1>.
-      IF <ls_res1>-filename IS NOT INITIAL AND <ls_res1>-filename = ls_file-filename.
-        io_log->add( iv_msgv1 = 'Multiple files with same filename,'
-                     iv_msgv2 = <ls_res1>-filename
-                     iv_rc    = '3' ) ##no_text.
-      ENDIF.
-
-      IF <ls_res1>-filename IS INITIAL.
-        io_log->add( iv_msgv1 = 'Filename is empty for object'
-                     iv_msgv2 = <ls_res1>-obj_type
-                     iv_msgv3 = <ls_res1>-obj_name
-                     iv_rc    = '4' ) ##no_text.
-      ENDIF.
-
-      MOVE-CORRESPONDING <ls_res1> TO ls_file.
-    ENDLOOP.
-
-  ENDMETHOD.                    "check
-
   METHOD status.
 
     DATA: lv_index       LIKE sy-tabix,
@@ -12524,6 +12035,7 @@ CLASS lcl_file_status IMPLEMENTATION.
 
 
     rt_results = calculate_status(
+
       iv_devclass  = io_repo->get_package( )
       it_local     = io_repo->get_files_local( io_log = io_log )
       it_remote    = io_repo->get_files_remote( )
@@ -12542,10 +12054,10 @@ CLASS lcl_file_status IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    run_checks(
+    lcl_sap_package=>check(
       io_log     = io_log
       it_results = rt_results
-      io_dot     = lo_dot_abapgit
+      iv_start   = lo_dot_abapgit->get_starting_folder( )
       iv_top     = io_repo->get_package( ) ).
 
   ENDMETHOD.  "status
@@ -13939,12 +13451,12 @@ CLASS lcl_objects IMPLEMENTATION.
 
   METHOD update_package_tree.
 
-    DATA: lt_packages TYPE lif_sap_package=>ty_devclass_tt,
+    DATA: lt_packages TYPE lcl_sap_package=>ty_devclass_tt,
           lv_package  LIKE LINE OF lt_packages,
           lv_tree     TYPE dirtree-tname.
 
 
-    lt_packages = lcl_sap_package=>get( iv_package )->list_subpackages( ).
+    lt_packages = lcl_sap_package=>list_subpackages( iv_package ).
     APPEND iv_package TO lt_packages.
 
     LOOP AT lt_packages INTO lv_package.
@@ -14081,6 +13593,35 @@ CLASS lcl_objects IMPLEMENTATION.
     ENDTRY.
 
   ENDMETHOD.                    "exists
+
+  METHOD path_to_package.
+
+    DATA: lv_length TYPE i,
+          lv_parent TYPE devclass,
+          lv_new    TYPE string,
+          lv_path   TYPE string.
+
+
+    lv_length = strlen( iv_start ).
+    lv_path = iv_path+lv_length.
+    lv_parent = iv_top.
+    rv_package = iv_top.
+
+    WHILE lv_path CA '/'.
+      SPLIT lv_path AT '/' INTO lv_new lv_path.
+
+      CONCATENATE rv_package '_' lv_new INTO rv_package.
+      TRANSLATE rv_package TO UPPER CASE.
+
+      IF lcl_sap_package=>exists( rv_package ) = abap_false.
+        lcl_sap_package=>create_child( iv_parent = lv_parent
+                                       iv_child  = rv_package ).
+      ENDIF.
+
+      lv_parent = rv_package.
+    ENDWHILE.
+
+  ENDMETHOD.
 
   METHOD class_name.
 
@@ -14454,10 +13995,10 @@ CLASS lcl_objects IMPLEMENTATION.
 * handle namespaces
       REPLACE ALL OCCURRENCES OF '#' IN ls_item-obj_name WITH '/'.
 
-      lv_package = lcl_folder_logic=>path_to_package(
-        iv_top  = io_repo->get_package( )
-        io_dot  = io_repo->get_dot_abapgit( )
-        iv_path = <ls_result>-path ).
+      lv_package = path_to_package(
+        iv_top   = io_repo->get_package( )
+        iv_start = io_repo->get_dot_abapgit( )->get_starting_folder( )
+        iv_path  = <ls_result>-path ).
 
       lv_cancel = warning_package( is_item    = ls_item
                                    iv_package = lv_package ).
@@ -14682,7 +14223,6 @@ CLASS lcl_object_acid IMPLEMENTATION.
     lo_aab = create_object( ).
     lo_aab->enqueue( ).
     lo_aab->set_descript( lv_description ).
-    tadir_insert( iv_package ).
     lo_aab->save( ).
 
   ENDMETHOD.                    "lif_object~deserialize
@@ -16189,201 +15729,6 @@ ENDCLASS.
 
 
 ****************************************************
-* abapmerge - ZABAPGIT_OBJECT_DDLS
-****************************************************
-*&---------------------------------------------------------------------*
-*&  Include           ZABAPGIT_OBJECT_VIEW
-*&---------------------------------------------------------------------*
-
-*----------------------------------------------------------------------*
-*       CLASS lcl_object_view DEFINITION
-*----------------------------------------------------------------------*
-*
-*----------------------------------------------------------------------*
-CLASS lcl_object_ddls DEFINITION INHERITING FROM lcl_objects_super FINAL.
-
-  PUBLIC SECTION.
-    INTERFACES lif_object.
-    ALIASES mo_files FOR lif_object~mo_files.
-
-ENDCLASS.                    "lcl_object_dtel DEFINITION
-
-*----------------------------------------------------------------------*
-*       CLASS lcl_object_view IMPLEMENTATION
-*----------------------------------------------------------------------*
-*
-*----------------------------------------------------------------------*
-CLASS lcl_object_ddls IMPLEMENTATION.
-
-  METHOD lif_object~has_changed_since.
-    rv_changed = abap_true.
-  ENDMETHOD.  "lif_object~has_changed_since
-
-  METHOD lif_object~changed_by.
-* todo
-    rv_user = c_user_unknown.
-  ENDMETHOD.                    "lif_object~changed_by
-
-  METHOD lif_object~get_metadata.
-    rs_metadata = get_metadata( ).
-
-    rs_metadata-ddic         = abap_true.
-    rs_metadata-delete_tadir = abap_true.
-  ENDMETHOD.                    "lif_object~get_metadata
-
-  METHOD lif_object~exists.
-
-    DATA: lv_state TYPE objstate,
-          li_ddl   TYPE REF TO object.
-
-
-    CALL METHOD ('CL_DD_DDL_HANDLER_FACTORY')=>('CREATE')
-      RECEIVING
-        handler = li_ddl.
-
-    TRY.
-        CALL METHOD li_ddl->('IF_DD_DDL_HANDLER~READ')
-          EXPORTING
-            name      = ms_item-obj_name
-            get_state = 'A'
-          IMPORTING
-            got_state = lv_state.
-        IF lv_state IS INITIAL.
-          rv_bool = abap_false.
-        ELSE.
-          rv_bool = abap_true.
-        ENDIF.
-      CATCH cx_root.
-        rv_bool = abap_false.
-    ENDTRY.
-
-  ENDMETHOD.                    "lif_object~exists
-
-  METHOD lif_object~jump.
-    lcx_exception=>raise( 'todo, DDLS jump' ).
-  ENDMETHOD.                    "jump
-
-  METHOD lif_object~delete.
-
-    DATA: li_ddl TYPE REF TO object.
-
-
-    CALL METHOD ('CL_DD_DDL_HANDLER_FACTORY')=>('CREATE')
-      RECEIVING
-        handler = li_ddl.
-
-    TRY.
-        CALL METHOD li_ddl->('IF_DD_DDL_HANDLER~DELETE')
-          EXPORTING
-            name = ms_item-obj_name.
-      CATCH cx_root.
-        lcx_exception=>raise( 'DDLS error' ).
-    ENDTRY.
-
-  ENDMETHOD.                    "delete
-
-  METHOD lif_object~serialize.
-
-    DATA: li_ddl    TYPE REF TO object,
-          lv_source TYPE string,
-          lr_data   TYPE REF TO data.
-
-    FIELD-SYMBOLS: <ls_data>  TYPE any,
-                   <lv_field> TYPE any.
-
-
-    CREATE DATA lr_data TYPE ('DDDDLSRCV').
-    ASSIGN lr_data->* TO <ls_data>.
-
-    CALL METHOD ('CL_DD_DDL_HANDLER_FACTORY')=>('CREATE')
-      RECEIVING
-        handler = li_ddl.
-
-    TRY.
-        CALL METHOD li_ddl->('IF_DD_DDL_HANDLER~READ')
-          EXPORTING
-            name         = ms_item-obj_name
-            get_state    = 'A'
-          IMPORTING
-            ddddlsrcv_wa = <ls_data>.
-      CATCH cx_root.
-        lcx_exception=>raise( 'DDLS error' ).
-    ENDTRY.
-
-    ASSIGN COMPONENT 'AS4USER' OF STRUCTURE <ls_data> TO <lv_field>.
-    ASSERT sy-subrc = 0.
-    CLEAR <lv_field>.
-    ASSIGN COMPONENT 'AS4DATE' OF STRUCTURE <ls_data> TO <lv_field>.
-    ASSERT sy-subrc = 0.
-    CLEAR <lv_field>.
-    ASSIGN COMPONENT 'AS4TIME' OF STRUCTURE <ls_data> TO <lv_field>.
-    ASSERT sy-subrc = 0.
-    CLEAR <lv_field>.
-
-    ASSIGN COMPONENT 'SOURCE' OF STRUCTURE <ls_data> TO <lv_field>.
-    ASSERT sy-subrc = 0.
-
-    mo_files->add_string( iv_ext    = 'asddls'
-                          iv_string = <lv_field> ) ##no_text.
-
-    CLEAR <lv_field>.
-
-    io_xml->add( iv_name = 'DDLS'
-                 ig_data = <ls_data> ).
-
-  ENDMETHOD.                    "serialize
-
-  METHOD lif_object~deserialize.
-
-    DATA: li_ddl  TYPE REF TO object,
-          lr_data TYPE REF TO data.
-
-    FIELD-SYMBOLS: <ls_data>  TYPE any,
-                   <lv_field> TYPE any.
-
-
-    CREATE DATA lr_data TYPE ('DDDDLSRCV').
-    ASSIGN lr_data->* TO <ls_data>.
-
-    io_xml->read( EXPORTING iv_name = 'DDLS'
-                  CHANGING cg_data  = <ls_data> ).
-
-    ASSIGN COMPONENT 'SOURCE' OF STRUCTURE <ls_data> TO <lv_field>.
-    ASSERT sy-subrc = 0.
-    <lv_field> = mo_files->read_string( 'asddls' ) ##no_text.
-
-    CALL METHOD ('CL_DD_DDL_HANDLER_FACTORY')=>('CREATE')
-      RECEIVING
-        handler = li_ddl.
-
-    TRY.
-        CALL METHOD li_ddl->('IF_DD_DDL_HANDLER~SAVE')
-          EXPORTING
-            name         = ms_item-obj_name
-            put_state    = 'N'
-            ddddlsrcv_wa = <ls_data>.
-
-        CALL METHOD li_ddl->('IF_DD_DDL_HANDLER~WRITE_TADIR')
-          EXPORTING
-            objectname = ms_item-obj_name
-            devclass   = iv_package
-            prid       = 0.
-      CATCH cx_root.
-        lcx_exception=>raise( 'DDLS error' ).
-    ENDTRY.
-
-    lcl_objects_activation=>add_item( ms_item ).
-
-  ENDMETHOD.                    "deserialize
-
-  METHOD lif_object~compare_to_remote_version.
-    CREATE OBJECT ro_comparison_result TYPE lcl_null_comparison_result.
-  ENDMETHOD.                    "lif_object~compare_to_remote_version
-
-ENDCLASS.                    "lcl_object_view IMPLEMENTATION
-
-
-****************************************************
 * abapmerge - ZABAPGIT_OBJECT_DOCT
 ****************************************************
 *&---------------------------------------------------------------------*
@@ -16996,7 +16341,7 @@ CLASS lcl_object_doma IMPLEMENTATION.
     SORT lt_dd01_texts BY ddlanguage ASCENDING.
     SORT lt_dd07_texts BY ddlanguage ASCENDING.
 
-    IF lines( lt_i18n_langs ) > 0.
+    IF lines( lt_i18n_langs ) > 1.
       io_xml->add( iv_name = 'I18N_LANGS'
                    ig_data = lt_i18n_langs ).
 
@@ -19398,8 +18743,6 @@ CLASS lcl_object_fugr IMPLEMENTATION.
     FIELD-SYMBOLS: <lv_include> LIKE LINE OF lt_includes.
 
 
-    tadir_insert( iv_package ).
-
     io_xml->read( EXPORTING iv_name = 'INCLUDES'
                   CHANGING cg_data = lt_includes ).
 
@@ -20521,10 +19864,7 @@ CLASS lcl_object_intf DEFINITION FINAL INHERITING FROM lcl_objects_program.
     METHODS serialize_xml
       IMPORTING io_xml TYPE REF TO lcl_xml_output
       RAISING   lcx_exception.
-
 ENDCLASS.                    "lcl_object_intf DEFINITION
-
-
 CLASS lcl_object_intf IMPLEMENTATION.
   METHOD constructor.
     super->constructor(
@@ -20569,7 +19909,6 @@ CLASS lcl_object_intf IMPLEMENTATION.
 
     mo_object_oriented_object_fct->add_to_activation_list( is_item = ms_item ).
   ENDMETHOD.
-
   METHOD deserialize_docu.
 
     DATA: lt_lines  TYPE tlinetab,
@@ -20589,7 +19928,6 @@ CLASS lcl_object_intf IMPLEMENTATION.
       iv_object_name = lv_object
       iv_language    = mv_language ).
   ENDMETHOD.
-
   METHOD lif_object~has_changed_since.
     DATA:
       lv_program  TYPE program,
@@ -20717,24 +20055,10 @@ CLASS lcl_object_intf IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD lif_object~exists.
-
-    DATA: ls_class_key TYPE seoclskey,
-          lv_category  TYPE seoclassdf-category.
-
+    DATA: ls_class_key TYPE seoclskey.
     ls_class_key-clsname = ms_item-obj_name.
 
     rv_bool = mo_object_oriented_object_fct->exists( iv_object_name = ls_class_key ).
-
-    IF rv_bool = abap_true.
-      SELECT SINGLE category FROM seoclassdf INTO lv_category
-        WHERE clsname = ls_class_key-clsname
-        AND ( version = '1'
-        OR version = '0' ) ##warn_ok.                   "#EC CI_GENBUFF
-      IF sy-subrc = 0 AND lv_category = seoc_category_webdynpro_class.
-        rv_bool = abap_false.
-      ENDIF.
-    ENDIF.
-
   ENDMETHOD.
 
   METHOD lif_object~get_metadata.
@@ -20751,6 +20075,7 @@ CLASS lcl_object_intf IMPLEMENTATION.
   ENDMETHOD.
 
 ENDCLASS.
+
 
 
 CLASS lcl_object_oriented_interface DEFINITION
@@ -21292,7 +20617,21 @@ CLASS lcl_object_nrob IMPLEMENTATION.
       lcx_exception=>raise( 'error from NUMBER_RANGE_OBJECT_CLOSE' ).
     ENDIF.
 
-    tadir_insert( iv_package ).
+    CALL FUNCTION 'TR_TADIR_INTERFACE'
+      EXPORTING
+        wi_test_modus       = abap_false
+        wi_tadir_pgmid      = 'R3TR'
+        wi_tadir_object     = 'NROB'
+        wi_tadir_obj_name   = ms_item-obj_name
+        wi_tadir_author     = sy-uname
+        wi_tadir_devclass   = iv_package
+        wi_tadir_masterlang = mv_language
+        wi_set_genflag      = abap_true
+      EXCEPTIONS
+        OTHERS              = 1.
+    IF sy-subrc <> 0.
+      lcx_exception=>raise( 'error from TR_TADIR_INTERFACE' ).
+    ENDIF.
 
   ENDMETHOD.                    "deserialize
 
@@ -22176,15 +21515,7 @@ CLASS lcl_object_sfbf IMPLEMENTATION.
 
   METHOD lif_object~changed_by.
 
-    DATA: ls_data TYPE sfw_bf.
-
-    ls_data = get( )->get_header_data( ).
-
-    rv_user = ls_data-changedby.
-
-    IF rv_user IS INITIAL.
-      rv_user = ls_data-author.
-    ENDIF.
+    rv_user = get( )->get_header_data( )-changedby.
 
   ENDMETHOD.
 
@@ -22351,10 +21682,7 @@ CLASS lcl_object_sfbf IMPLEMENTATION.
         im_sfw_bfc_tc = ls_sfw_bfc_tc ).
     lo_bf->set_parent_bfs( lt_parent_bfs ).
 
-* magic, see function module RS_CORR_INSERT, FORM get_current_devclass
-    SET PARAMETER ID 'EUK' FIELD iv_package.
     lo_bf->save_all( ).
-    SET PARAMETER ID 'EUK' FIELD ''.
 
     lcl_objects_activation=>add_item( ms_item ).
 
@@ -22362,21 +21690,18 @@ CLASS lcl_object_sfbf IMPLEMENTATION.
 
   METHOD lif_object~delete.
 
-    DATA: lv_bf     TYPE sfw_bfunction,
-          lt_delete TYPE sfw_bftab,
-          lt_msgtab TYPE sprot_u_tab.
+    DATA: lv_bf TYPE sfw_bfunction,
+          lo_bf TYPE REF TO cl_sfw_bf.
 
 
     lv_bf = ms_item-obj_name.
-    APPEND lv_bf TO lt_delete.
-
-    cl_sfw_activate=>delete_sfbf( EXPORTING p_bfuncts = lt_delete
-                                  IMPORTING p_msgtab = lt_msgtab ).
-
-    READ TABLE lt_msgtab WITH KEY severity = 'E' TRANSPORTING NO FIELDS.
-    IF sy-subrc = 0.
-      lcx_exception=>raise( 'Error deleting SFBF' ).
-    ENDIF.
+    TRY.
+        lo_bf = cl_sfw_bf=>get_bf( lv_bf ).
+        lo_bf->set_delete_flag( lv_bf ).
+        lo_bf->save_all( ).
+      CATCH cx_pak_invalid_data cx_pak_invalid_state cx_pak_not_authorized.
+        lcx_exception=>raise( 'Error deleting BF' ).
+    ENDTRY.
 
   ENDMETHOD.                    "delete
 
@@ -22436,15 +21761,7 @@ CLASS lcl_object_sfbs IMPLEMENTATION.
 
   METHOD lif_object~changed_by.
 
-    DATA: ls_data TYPE sfw_bs.
-
-    ls_data = get( )->get_header_data( ).
-
-    rv_user = ls_data-changedby.
-
-    IF rv_user IS INITIAL.
-      rv_user = ls_data-author.
-    ENDIF.
+    rv_user = get( )->get_header_data( )-changedby.
 
   ENDMETHOD.
 
@@ -22585,10 +21902,7 @@ CLASS lcl_object_sfbs IMPLEMENTATION.
     lo_bfs->set_assigned_bfs( lt_nested_bfs ).
     lo_bfs->set_nested_parent( lt_parent_bfs ).
 
-* magic, see function module RS_CORR_INSERT, FORM get_current_devclass
-    SET PARAMETER ID 'EUK' FIELD iv_package.
     lo_bfs->save_all( ).
-    SET PARAMETER ID 'EUK' FIELD ''.
 
     lcl_objects_activation=>add_item( ms_item ).
 
@@ -22596,21 +21910,18 @@ CLASS lcl_object_sfbs IMPLEMENTATION.
 
   METHOD lif_object~delete.
 
-    DATA: lv_bfset  TYPE sfw_bset,
-          lt_delete TYPE sfw_bstab,
-          lt_msgtab TYPE sprot_u_tab.
+    DATA: lv_bfset TYPE sfw_bset,
+          lo_bfs   TYPE REF TO cl_sfw_bfs.
 
 
     lv_bfset = ms_item-obj_name.
-    APPEND lv_bfset TO lt_delete.
-
-    cl_sfw_activate=>delete_sfbs( EXPORTING p_bsets = lt_delete
-                                  IMPORTING p_msgtab = lt_msgtab ).
-
-    READ TABLE lt_msgtab WITH KEY severity = 'E' TRANSPORTING NO FIELDS.
-    IF sy-subrc = 0.
-      lcx_exception=>raise( 'Error deleting SFBS' ).
-    ENDIF.
+    TRY.
+        lo_bfs = cl_sfw_bfs=>get_bfs( lv_bfset ).
+        lo_bfs->set_delete_flag( lv_bfset ).
+        lo_bfs->save_all( ).
+      CATCH cx_pak_invalid_data cx_pak_invalid_state cx_pak_not_authorized.
+        lcx_exception=>raise( 'Error deleting BF' ).
+    ENDTRY.
 
   ENDMETHOD.                    "delete
 
@@ -22628,6 +21939,8 @@ CLASS lcl_object_sfbs IMPLEMENTATION.
   METHOD lif_object~compare_to_remote_version.
     CREATE OBJECT ro_comparison_result TYPE lcl_null_comparison_result.
   ENDMETHOD.
+
+
 
 ENDCLASS.                    "lcl_object_SFBS IMPLEMENTATION
 
@@ -22670,15 +21983,7 @@ CLASS lcl_object_sfsw IMPLEMENTATION.
 
   METHOD lif_object~changed_by.
 
-    DATA: ls_data TYPE sfw_switch.
-
-
-    ls_data = get( )->get_header_data( ).
-
-    rv_user = ls_data-changedby.
-    IF rv_user IS INITIAL.
-      rv_user = ls_data-author.
-    ENDIF.
+    rv_user = get( )->get_header_data( )-changedby.
 
   ENDMETHOD.
 
@@ -22807,17 +22112,13 @@ CLASS lcl_object_sfsw IMPLEMENTATION.
     lo_switch->set_parent_bf( lt_parent_bf ).
     lo_switch->set_conflicts( lt_conflicts ).
 
-* magic, see function module RS_CORR_INSERT, FORM get_current_devclass
-    SET PARAMETER ID 'EUK' FIELD iv_package.
     lo_switch->save_all(
       EXCEPTIONS
         not_saved = 1
         OTHERS    = 2 ).
-    SET PARAMETER ID 'EUK' FIELD ''.
     IF sy-subrc <> 0.
       lcx_exception=>raise( 'error in CL_SFW_SW->SAVE_ALL' ).
     ENDIF.
-
 
     lcl_objects_activation=>add_item( ms_item ).
 
@@ -23904,7 +23205,7 @@ CLASS lcl_object_smim IMPLEMENTATION.
 
     SELECT SINGLE chng_user FROM smimloio INTO rv_user
       WHERE loio_id = lv_loio.                          "#EC CI_GENBUFF
-    IF sy-subrc <> 0 OR rv_user IS INITIAL.
+    IF sy-subrc <> 0.
       rv_user = c_user_unknown.
     ENDIF.
 
@@ -24208,7 +23509,7 @@ CLASS lcl_object_splo IMPLEMENTATION.
 
     SELECT SINGLE chgname1 FROM tsp1d INTO rv_user
       WHERE papart = ms_item-obj_name.
-    IF sy-subrc <> 0 OR rv_user IS INITIAL.
+    IF sy-subrc <> 0.
       rv_user = c_user_unknown.
     ENDIF.
 
@@ -24273,14 +23574,12 @@ CLASS lcl_object_splo IMPLEMENTATION.
 
     lv_obj_name = ms_item-obj_name.
 
-    tadir_insert( iv_package ).
-
-*    CALL FUNCTION 'TR_TADIR_POPUP_ENTRY_E071'
-*      EXPORTING
-*        wi_e071_pgmid     = 'R3TR'
-*        wi_e071_object    = ms_item-obj_type
-*        wi_e071_obj_name  = lv_obj_name
-*        wi_tadir_devclass = iv_package.
+    CALL FUNCTION 'TR_TADIR_POPUP_ENTRY_E071'
+      EXPORTING
+        wi_e071_pgmid     = 'R3TR'
+        wi_e071_object    = ms_item-obj_type
+        wi_e071_obj_name  = lv_obj_name
+        wi_tadir_devclass = iv_package.
 
   ENDMETHOD.                    "lif_object~deserialize
 
@@ -24537,8 +23836,7 @@ CLASS lcl_object_ssfo IMPLEMENTATION.
       li_node = li_iterator->get_next( ).
     ENDWHILE.
 
-    tadir_insert( iv_package ).
-
+* todo, iv_package?
     lv_formname = ms_item-obj_name.
     lo_sf->enqueue( suppress_corr_check = space
                     master_language     = mv_language
@@ -24817,6 +24115,7 @@ CLASS lcl_object_susc IMPLEMENTATION.
 
   METHOD lif_object~get_metadata.
     rs_metadata = get_metadata( ).
+    rs_metadata-delete_tadir = abap_true.
   ENDMETHOD.                    "lif_object~get_metadata
 
   METHOD lif_object~exists.
@@ -24845,6 +24144,9 @@ CLASS lcl_object_susc IMPLEMENTATION.
     SELECT SINGLE * FROM tobct INTO ls_tobct
       WHERE oclss = ms_item-obj_name
       AND langu = mv_language.
+*    IF sy-subrc <> 0.
+*     lcx_exception=>raise( 'TOBCT no english description' ).
+*    ENDIF.
 
     io_xml->add( iv_name = 'TOBC'
                  ig_data = ls_tobc ).
@@ -24865,8 +24167,6 @@ CLASS lcl_object_susc IMPLEMENTATION.
                   CHANGING cg_data = ls_tobc ).
     io_xml->read( EXPORTING iv_name = 'TOBCT'
                   CHANGING cg_data = ls_tobct ).
-
-    tadir_insert( iv_package ).
 
     lv_objectname = ms_item-obj_name.
     CALL FUNCTION 'SUSR_COMMEDITCHECK'
@@ -25044,8 +24344,6 @@ CLASS lcl_object_suso IMPLEMENTATION.
                   CHANGING  cg_data = lt_tobjvordat ).
     io_xml->read( EXPORTING iv_name = 'TOBJVOR'
                   CHANGING  cg_data = lt_tobjvor ).
-
-    tadir_insert( iv_package ).
 
     lv_objectname = ms_item-obj_name.
     CALL FUNCTION 'SUSR_COMMEDITCHECK'
@@ -26005,19 +25303,10 @@ CLASS lcl_object_tran DEFINITION INHERITING FROM lcl_objects_super FINAL.
                  cs_rsstcd  TYPE rsstcd
                  cs_tstcp   TYPE tstcp
                  cs_tstc    TYPE tstc,
-
       split_parameters_comp
         IMPORTING iv_type  TYPE any
                   iv_param TYPE any
-        CHANGING  cg_value TYPE any,
-
-      serialize_texts
-        IMPORTING io_xml TYPE REF TO lcl_xml_output
-        RAISING lcx_exception,
-
-      deserialize_texts
-        IMPORTING io_xml TYPE REF TO lcl_xml_input
-        RAISING lcx_exception.
+        CHANGING  cg_value TYPE any.
 
 ENDCLASS.                    "lcl_object_TRAN DEFINITION
 
@@ -26337,9 +25626,6 @@ CLASS lcl_object_tran IMPLEMENTATION.
       lcx_exception=>raise( 'Error from RPY_TRANSACTION_INSERT' ).
     ENDIF.
 
-    " Texts deserializing (translations)
-    deserialize_texts( io_xml ).
-
   ENDMETHOD.                    "deserialize
 
   METHOD lif_object~serialize.
@@ -26396,58 +25682,12 @@ CLASS lcl_object_tran IMPLEMENTATION.
                    ig_data = ls_tstcp ).
     ENDIF.
 
-    " Texts serializing (translations)
-    serialize_texts( io_xml ).
-
   ENDMETHOD.                    "serialize
 
   METHOD lif_object~compare_to_remote_version.
     CREATE OBJECT ro_comparison_result TYPE lcl_null_comparison_result.
   ENDMETHOD.
 
-  METHOD serialize_texts.
-
-    DATA lt_tpool_i18n TYPE TABLE OF tstct.
-
-    " Skip master language - it was already serialized
-    " Don't serialize t-code itself
-    SELECT sprsl ttext
-      INTO CORRESPONDING FIELDS OF TABLE lt_tpool_i18n
-      FROM tstct
-      WHERE sprsl <> mv_language
-      AND   tcode = ms_item-obj_name.
-
-    IF lines( lt_tpool_i18n ) > 0.
-      SORT lt_tpool_i18n BY sprsl ASCENDING.
-      io_xml->add( iv_name = 'I18N_TPOOL'
-                   ig_data = lt_tpool_i18n ).
-    ENDIF.
-
-  ENDMETHOD.                    "serialize_texts
-
-  METHOD deserialize_texts.
-
-    DATA lt_tpool_i18n TYPE TABLE OF tstct.
-
-    FIELD-SYMBOLS <tpool> LIKE LINE OF lt_tpool_i18n.
-
-    " Read XML-files data
-    io_xml->read( EXPORTING iv_name = 'I18N_TPOOL'
-                  CHANGING  cg_data = lt_tpool_i18n ).
-
-    " Force t-code name (security reasons)
-    LOOP AT lt_tpool_i18n ASSIGNING <tpool>.
-      <tpool>-tcode = ms_item-obj_name.
-    ENDLOOP.
-
-    IF lines( lt_tpool_i18n ) > 0.
-      MODIFY tstct FROM TABLE lt_tpool_i18n.
-      IF sy-subrc <> 0.
-        lcx_exception=>raise( 'Update of t-code translations failed' ).
-      ENDIF.
-    ENDIF.
-
-  ENDMETHOD.                    "deserialize_texts
 ENDCLASS.                    "lcl_object_tran IMPLEMENTATION
 
 
@@ -27131,7 +26371,7 @@ CLASS lcl_object_view IMPLEMENTATION.
       rv_user = c_user_unknown.
     ENDIF.
 
-  ENDMETHOD.                    "lif_object~changed_by
+  ENDMETHOD.
 
   METHOD lif_object~get_metadata.
     rs_metadata = get_metadata( ).
@@ -27140,8 +26380,7 @@ CLASS lcl_object_view IMPLEMENTATION.
 
   METHOD lif_object~exists.
 
-    DATA: lv_viewname TYPE dd25l-viewname,
-          lv_ddl_view TYPE abap_bool.
+    DATA: lv_viewname TYPE dd25l-viewname.
 
 
     SELECT SINGLE viewname FROM dd25l INTO lv_viewname
@@ -27149,21 +26388,6 @@ CLASS lcl_object_view IMPLEMENTATION.
       AND as4local = 'A'
       AND as4vers = '0000'.
     rv_bool = boolc( sy-subrc = 0 ).
-
-    IF rv_bool = abap_true.
-      TRY.
-          CALL METHOD ('CL_DD_DDL_UTILITIES')=>('CHECK_FOR_DDL_VIEW')
-            EXPORTING
-              objname     = lv_viewname
-            RECEIVING
-              is_ddl_view = lv_ddl_view.
-
-          IF lv_ddl_view = abap_true.
-            rv_bool = abap_false.
-          ENDIF.
-        CATCH cx_root.
-      ENDTRY.
-    ENDIF.
 
   ENDMETHOD.                    "lif_object~exists
 
@@ -27337,7 +26561,7 @@ CLASS lcl_object_view IMPLEMENTATION.
 
   METHOD lif_object~compare_to_remote_version.
     CREATE OBJECT ro_comparison_result TYPE lcl_null_comparison_result.
-  ENDMETHOD.                    "lif_object~compare_to_remote_version
+  ENDMETHOD.
 
 ENDCLASS.                    "lcl_object_view IMPLEMENTATION
 
@@ -27937,8 +27161,6 @@ CLASS lcl_object_wdya IMPLEMENTATION.
           li_prop = lo_app->if_wdy_md_application~create_property( <ls_property>-name ).
           li_prop->set_value( <ls_property>-value ).
         ENDLOOP.
-
-        tadir_insert( iv_package ).
 
         lo_app->if_wdy_md_lockable_object~save_to_database( ).
       CATCH cx_wdy_md_exception.
@@ -28767,8 +27989,6 @@ CLASS lcl_object_wdyn IMPLEMENTATION.
                   CHANGING cg_data = mt_components ).
     io_xml->read( EXPORTING iv_name  = 'SOURCES'
                   CHANGING cg_data = mt_sources ).
-
-    tadir_insert( iv_package ).
 
     ls_component-comp_metadata-definition-author = sy-uname.
     ls_component-comp_metadata-definition-createdon = sy-datum.
@@ -30068,8 +29288,7 @@ CLASS lcl_repo IMPLEMENTATION.
     lt_cache = mt_local.
     lt_tadir = lcl_tadir=>read(
       iv_package            = get_package( )
-      iv_ignore_subpackages = ignore_subpackages( )
-      io_dot                = get_dot_abapgit( ) ).
+      iv_ignore_subpackages = ignore_subpackages( ) ).
 
     lt_filter = it_filter.
     lv_filter_exist = boolc( lines( lt_filter ) > 0 ) .
@@ -30114,7 +29333,7 @@ CLASS lcl_repo IMPLEMENTATION.
         iv_language = get_master_language( )
         io_log      = io_log ).
       LOOP AT lt_files ASSIGNING <ls_file>.
-        <ls_file>-path = <ls_tadir>-path.
+        <ls_file>-path = mo_dot_abapgit->get_starting_folder( ) && <ls_tadir>-path.
         <ls_file>-sha1 = lcl_hash=>sha1( iv_type = gc_type-blob iv_data = <ls_file>-data ).
 
         APPEND INITIAL LINE TO rt_files ASSIGNING <ls_return>.
@@ -30791,8 +30010,8 @@ CLASS lcl_transport IMPLEMENTATION.
   METHOD find_top_package.
 * assumption: all objects in transport share a common super package
 
-    DATA: lt_obj   TYPE lif_sap_package=>ty_devclass_tt,
-          lt_super TYPE lif_sap_package=>ty_devclass_tt,
+    DATA: lt_obj   TYPE lcl_sap_package=>ty_devclass_tt,
+          lt_super TYPE lcl_sap_package=>ty_devclass_tt,
           lv_super LIKE LINE OF lt_super,
           lv_index TYPE i.
 
@@ -30801,10 +30020,10 @@ CLASS lcl_transport IMPLEMENTATION.
 
     READ TABLE it_tadir INDEX 1 ASSIGNING <ls_tadir>.
     ASSERT sy-subrc = 0.
-    lt_super = lcl_sap_package=>get( <ls_tadir>-devclass )->list_superpackages( ).
+    lt_super = lcl_sap_package=>list_superpackages( <ls_tadir>-devclass ).
 
     LOOP AT it_tadir ASSIGNING <ls_tadir>.
-      lt_obj = lcl_sap_package=>get( <ls_tadir>-devclass )->list_superpackages( ).
+      lt_obj = lcl_sap_package=>list_superpackages( <ls_tadir>-devclass ).
 
 * filter out possibilities from lt_super
       LOOP AT lt_super INTO lv_super.
@@ -31955,12 +31174,12 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline 'table             { border-collapse: collapse; }'.
         _inline 'pre               { display: inline; }'.
         _inline ''.
-        _inline 'input, textarea, select {'.
+        _inline 'form input, textarea, select {'.
+        _inline '  border: 1px solid #DDD;'.
         _inline '  padding: 3px 6px;'.
-        _inline '  border: 1px solid #ddd;'.
         _inline '}'.
         _inline ''.
-        _inline 'input:focus, textarea:focus {'.
+        _inline 'form input:focus, textarea:focus {'.
         _inline '  border: 1px solid #8cadd9;'.
         _inline '}'.
         _inline ''.
@@ -31978,9 +31197,7 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '.crossout         { text-decoration: line-through !important; }'.
         _inline '.right            { text-align:right; }'.
         _inline '.paddings         { padding: 0.5em 0.5em; }'.
-        _inline '.pad-sides        { padding-left: 0.3em; padding-right: 0.3em; }'.
-        _inline '.margin-v5        { margin-top: 0.5em; margin-bottom: 0.5em; }'.
-        _inline '.indent5em        { padding-left: 0.5em; }'.
+        _inline '.pad-sides        { padding: 0 0.3em; }'.
         _inline '.pad4px           { padding: 4px; }'.
         _inline '.w100             { width: 100%; }'.
         _inline '.w40              { width: 40%; }'.
@@ -32293,9 +31510,6 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '}'.
         _inline ''.
         _inline '/* STAGE */'.
-        _inline 'div.stage-container { width: 850px; }'.
-        _inline 'input.stage-filter { width: 18em; }'.
-        _inline ''.
         _inline '.stage_tab {'.
         _inline '  border: 1px solid #DDD;'.
         _inline '  background: #fff;'.
@@ -32309,6 +31523,7 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '}'.
         _inline '.stage_tab th {'.
         _inline '  color: #BBB;'.
+        _inline '  font-size: 10pt;'.
         _inline '  text-align: left;'.
         _inline '  font-weight: normal;'.
         _inline '  background-color: #edf2f9;'.
@@ -32317,25 +31532,22 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '.stage_tab td.status {'.
         _inline '  width: 2em;'.
         _inline '  text-align: center;'.
-        _inline '  color: #ccc;'.
-        _inline '  background-color: #fafafa;'.
         _inline '}'.
-        _inline '.stage_tab td.highlight {'.
-        _inline '  color: #444 !important;'.
-        _inline '  font-weight: bold;'.
-        _inline '}'.
-        _inline ''.
-        _inline '.stage_tab td.cmd {  cursor: pointer; }'.
-        _inline '.stage_tab td.cmd a { padding: 0px 4px; }'.
-        _inline '.stage_tab th.cmd a { padding: 0px 4px; }'.
-        _inline '.stage_tab td.method { color: #ccc; }'.
-        _inline '.stage_tab td.user { color: #aaa; }'.
-        _inline '.stage_tab td.type { color: #aaa; }'.
         _inline '.stage_tab tbody tr:first-child td { padding-top: 0.5em; }'.
         _inline '.stage_tab tbody tr:last-child td { padding-bottom: 0.5em; }'.
-        _inline '.stage_tab mark {'.
-        _inline '  color: white;'.
-        _inline '  background-color: #79a0d2;'.
+        _inline '.stage_tab td.cmd a { padding: 0px 4px; }'.
+        _inline ''.
+        _inline '/* STAGE */'.
+        _inline '.stage_tab td.method {'.
+        _inline '  color: #ccc;'.
+        _inline '}'.
+        _inline '.stage_tab tr.firstrow td { border-top: 0px; }'.
+        _inline '.stage_tab tr.title td {'.
+        _inline '  color: #BBB;'.
+        _inline '  font-size: 10pt;'.
+        _inline '  background-color: #edf2f9;'.
+        _inline '  padding: 4px 0.5em;'.
+        _inline '  text-align: center;'.
         _inline '}'.
         _inline ''.
         _inline '/* COMMIT */'.
@@ -32690,53 +31902,6 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '  document.getElementById(id).submit();'.
         _inline '}'.
         _inline ''.
-        _inline '// JS error stub'.
-        _inline 'function errorStub(event) {'.
-        _inline '  var element    = event.target || event.srcElement;'.
-        _inline '  var targetName = element.id || element.name || "???";'.
-        _inline '  alert("JS Error, please log an issue (@" + targetName + ")");'.
-        _inline '}'.
-        _inline ''.
-        _inline '// confirm JS initilization'.
-        _inline 'function confirmInitialized() {'.
-        _inline '  var errorBanner = document.getElementById("js-error-banner");'.
-        _inline '  if (errorBanner) {'.
-        _inline '    errorBanner.style.display = "none";'.
-        _inline '  }'.
-        _inline '  debugOutput("js: OK"); // Final final confirmation :)'.
-        _inline '}'.
-        _inline ''.
-        _inline '/**********************************************************'.
-        _inline ' * Performance utils (for debugging)'.
-        _inline ' **********************************************************/'.
-        _inline ''.
-        _inline 'var gPerf = [];'.
-        _inline ''.
-        _inline 'function perfOut(prefix) {'.
-        _inline '  var totals = {};'.
-        _inline '  for (var i = gPerf.length - 1; i >= 0; i--) {'.
-        _inline '    if (!totals[gPerf[i].name]) totals[gPerf[i].name] = {count: 0, time: 0};'.
-        _inline '    totals[gPerf[i].name].time  += gPerf[i].time;'.
-        _inline '    totals[gPerf[i].name].count += 1;'.
-        _inline '  }'.
-        _inline ''.
-        _inline '  var keys = Object.keys(totals);'.
-        _inline '  for (var i = keys.length - 1; i >= 0; i--) {'.
-        _inline '    console.log(prefix '.
-        _inline '      + " " + keys[i] + ": " '.
-        _inline '      + totals[keys[i]].time.toFixed(3) + "ms"'.
-        _inline '      + " (" + totals[keys[i]].count.toFixed() +")");'.
-        _inline '  }'.
-        _inline '}'.
-        _inline ''.
-        _inline 'function perfLog(name, startTime) {'.
-        _inline '  gPerf.push({name: name, time: window.performance.now() - startTime});'.
-        _inline '}'.
-        _inline ''.
-        _inline 'function perfClear() {'.
-        _inline '  gPerf = [];'.
-        _inline '}'.
-        _inline ''.
         _inline '/**********************************************************'.
         _inline ' * STAGE PAGE Logic'.
         _inline ' **********************************************************/'.
@@ -32744,243 +31909,133 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '// Stage helper constructor'.
         _inline 'function StageHelper(params) {'.
         _inline '  this.pageSeed        = params.seed;'.
+        _inline '  this.tabId           = params.stageTabId;'.
         _inline '  this.formAction      = params.formAction;'.
+        _inline '  this.commitNodeId    = params.commitNodeId;'.
+        _inline '  this.commitAllNodeId = params.commitAllNodeId;'.
         _inline '  this.choiseCount     = 0;'.
-        _inline '  this.lastSearchValue = "";'.
-        _inline ''.
-        _inline '  // DOM nodes'.
-        _inline '  this.dom = {'.
-        _inline '    stageTab:     document.getElementById(params.ids.stageTab),'.
-        _inline '    commitBtn:    document.getElementById(params.ids.commitBtn),'.
-        _inline '    commitAllBtn: document.getElementById(params.ids.commitAllBtn),'.
-        _inline '    objectSearch: document.getElementById(params.ids.objectSearch),'.
-        _inline '    fileCounter:  document.getElementById(params.ids.fileCounter)'.
-        _inline '  };'.
-        _inline '  '.
-        _inline '  // Table columns (autodetection)'.
-        _inline '  this.col = this.detectColumns();'.
-        _inline ''.
-        _inline '  // Constants'.
-        _inline '  this.HIGHLIGHT_STYLE = "highlight";'.
-        _inline '  this.STATUS = {'.
-        _inline '    add:    "A",'.
-        _inline '    remove: "R",'.
-        _inline '    ignore: "I",'.
-        _inline '    reset:  "?",'.
-        _inline '    isValid: function (status) { return "ARI?".indexOf(status) == -1; }'.
-        _inline '  };'.
-        _inline '  '.
-        _inline '  this.TEMPLATES = {'.
-        _inline '    cmdReset:  "<a>reset</a>",'.
-        _inline '    cmdLocal:  "<a>add</a>",'.
-        _inline '    cmdRemote: "<a>ignore</a><a>remove</a>"'.
-        _inline '  };'.
-        _inline ''.
-        _inline '  this.setHooks();'.
+        _inline '  this.setHook();'.
         _inline '}'.
         _inline ''.
         _inline '// Hook global click listener on table, load/unload actions'.
-        _inline 'StageHelper.prototype.setHooks = function() {'.
-        _inline '  this.dom.stageTab.onclick        = this.onTableClick.bind(this);'.
-        _inline '  this.dom.commitBtn.onclick       = this.submit.bind(this);'.
-        _inline '  this.dom.objectSearch.oninput    = this.onSearch.bind(this);'.
-        _inline '  this.dom.objectSearch.onkeypress = this.onSearch.bind(this);'.
-        _inline '  window.onbeforeunload            = this.onPageUnload.bind(this);'.
-        _inline '  window.onload                    = this.onPageLoad.bind(this);'.
-        _inline '}'.
+        _inline 'StageHelper.prototype.setHook = function() {'.
+        _inline '  var stageTab = document.getElementById(this.tabId);'.
         _inline ''.
-        _inline '// Detect column index'.
-        _inline 'StageHelper.prototype.detectColumns = function() {'.
-        _inline '  var dataRow  = this.dom.stageTab.tBodies[0].rows[0];'.
-        _inline '  var cols     = {};'.
-        _inline ''.
-        _inline '  for (var i = dataRow.cells.length - 1; i >= 0; i--) {'.
-        _inline '    if (dataRow.cells[i].className) cols[dataRow.cells[i].className] = i;'.
+        _inline '  if (stageTab.addEventListener) {'.
+        _inline '    stageTab.addEventListener("click", this.onEvent.bind(this));'.
+        _inline '  } else {'.
+        _inline '    stageTab.attachEvent("onclick", this.onEvent.bind(this));'.
         _inline '  }'.
         _inline ''.
-        _inline '  return cols;'.
+        _inline '  window.onbeforeunload = this.onPageUnload.bind(this);'.
+        _inline '  window.onload         = this.onPageLoad.bind(this);'.
         _inline '}'.
         _inline ''.
         _inline '// Store table state on leaving the page'.
         _inline 'StageHelper.prototype.onPageUnload = function() {'.
-        _inline '  if (!window.sessionStorage) return;'.
-        _inline ''.
         _inline '  var data = this.collectData();'.
         _inline '  window.sessionStorage.setItem(this.pageSeed, JSON.stringify(data));'.
         _inline '}'.
         _inline ''.
         _inline '// Re-store table state on entering the page'.
         _inline 'StageHelper.prototype.onPageLoad = function() {'.
-        _inline '  var data = window.sessionStorage && JSON.parse(window.sessionStorage.getItem(this.pageSeed));'.
+        _inline '  var data  = JSON.parse(window.sessionStorage.getItem(this.pageSeed));'.
+        _inline '  var stage = document.getElementById(this.tabId);'.
         _inline ''.
-        _inline '  this.iterateStageTab(true, function (row) {'.
-        _inline '    var status = data && data[row.cells[this.col.name].innerText];'.
-        _inline '    this.updateRow(row, status || this.STATUS.reset);'.
-        _inline '  });'.
-        _inline ''.
-        _inline '  this.updateMenu();'.
-        _inline '  debugOutput("StageHelper.onPageLoad: " + ((data) ? "from Storage" : "initial state"));'.
-        _inline '}'.
-        _inline ''.
-        _inline '// Table event handler, change status'.
-        _inline 'StageHelper.prototype.onTableClick = function (event) {'.
-        _inline '  var target = event.target || event.srcElement;'.
-        _inline '  if (!target) return;'.
-        _inline ''.
-        _inline '  if (target.tagName === "A") {'.
-        _inline '    var td = target.parentNode;'.
-        _inline '  } else if (target.tagName === "TD") {'.
-        _inline '    var td = target;'.
-        _inline '    if (td.children.length === 1 && td.children[0].tagName === "A") {'.
-        _inline '      target = td.children[0];'.
-        _inline '    } else return;'.
-        _inline '  } else return;'.
-        _inline ''.
-        _inline '  if (["TD","TH"].indexOf(td.tagName) == -1 || td.className != "cmd") return;'.
-        _inline '  '.
-        _inline '  var status    = this.STATUS[target.innerText]; // Convert anchor text to status'.
-        _inline '  var targetRow = td.parentNode;'.
-        _inline '  '.
-        _inline '  if (td.tagName === "TD") {'.
-        _inline '    this.updateRow(targetRow, status);'.
-        _inline '  } else { // TH'.
-        _inline '    this.iterateStageTab(true, function (row) {'.
-        _inline '      if (row.style.display !== "none"            // Not filtered out'.
-        _inline '        && row.className === targetRow.className  // Same context as header'.
-        _inline '        ) {'.
-        _inline '        this.updateRow(row, status);'.
-        _inline '      }'.
-        _inline '    });'.
+        _inline '  for (var i = stage.rows.length - 1; i >= 0; i--) {'.
+        _inline '    var tr      = stage.rows[i];'.
+        _inline '    if (tr.parentNode.tagName == "THEAD") continue;'.
+        _inline '    var context = tr.parentNode.className;'.
+        _inline '    var cmd     = data[tr.cells[1].innerText];'.
+        _inline '    if (!cmd) continue;'.
+        _inline '    '.
+        _inline '    this.formatTR(tr, cmd, context);'.
+        _inline '    this.choiseCount += (this.countChoiceImpact(cmd) > 0) ? 1 : 0;'.
         _inline '  }'.
         _inline ''.
         _inline '  this.updateMenu();'.
         _inline '}'.
         _inline ''.
-        _inline '// Search object'.
-        _inline 'StageHelper.prototype.onSearch = function (e) {'.
-        _inline '  if ( // Enter hit or clear, IE SUCKS !'.
-        _inline '       e.type === "input" && !e.target.value && this.lastSearchValue'.
-        _inline '    || e.type === "keypress" && e.which === 13 ) { '.
-        _inline ''.
-        _inline '    this.lastSearchValue = e.target.value;'.
-        _inline '    this.iterateStageTab(true, this.applyFilterToRow, e.target.value);'.
+        _inline '// Event handler, change status'.
+        _inline 'StageHelper.prototype.onEvent = function (event) {'.
+        _inline '  if (!event.target) {'.
+        _inline '    if (event.srcElement) { event.target = event.srcElement; }'.
+        _inline '    else { return; }'.
         _inline '  }'.
+        _inline ''.
+        _inline '  if (event.target.tagName != "A") return;'.
+        _inline ''.
+        _inline '  var td = event.target.parentNode;'.
+        _inline '  if (!td || td.tagName != "TD" || td.className != "cmd") return;'.
+        _inline '  '.
+        _inline '  var cmd     = event.target.innerText;'.
+        _inline '  var tr      = td.parentNode;'.
+        _inline '  var context = tr.parentNode.className;'.
+        _inline '  '.
+        _inline '  switch (cmd) {'.
+        _inline '    case "add":    cmd = "A"; break;'.
+        _inline '    case "remove": cmd = "R"; break;'.
+        _inline '    case "ignore": cmd = "I"; break;'.
+        _inline '    case "reset":  cmd = "?"; break;'.
+        _inline '  }'.
+        _inline '  '.
+        _inline '  this.formatTR(tr, cmd, context);'.
+        _inline '  this.choiseCount += this.countChoiceImpact(cmd);'.
+        _inline '  this.updateMenu();'.
         _inline '}'.
         _inline ''.
-        _inline 'StageHelper.prototype.applyFilterToRow = function (row, filter) {'.
-        _inline '  var td      = row.cells[this.col.name];'.
-        _inline '  var origTxt = td.innerText; // without tags'.
-        _inline '  var newTxt  = "";'.
+        _inline '// Update action counter -> affects menu update after'.
+        _inline 'StageHelper.prototype.countChoiceImpact = function (cmd) {'.
+        _inline '  if ("ARI".indexOf(cmd) > -1) { return 1; }'.
+        _inline '  else if ("?".indexOf(cmd) > -1) { return -1; }'.
+        _inline '  else { alert("Unknown command"); }'.
+        _inline '}'.
         _inline ''.
-        _inline '  if (filter) {'.
-        _inline '    newTxt = origTxt.replace(filter, "<mark>"+filter+"</mark>");'.
-        _inline '    row.style.display = (newTxt !== origTxt) ? "" : "none";'.
-        _inline '  } else { // No filter -> just reset the value'.
-        _inline '    newTxt            = origTxt;'.
-        _inline '    row.style.display = ""; // default, visible'.
-        _inline '  }'.
+        _inline '// Re-format table line'.
+        _inline 'StageHelper.prototype.formatTR = function (tr, cmd, context) {'.
+        _inline '  var cmdReset  = "<a>reset</a>";'.
+        _inline '  var cmdLocal  = "<a>add</a>";'.
+        _inline '  var cmdRemote = "<a>ignore</a><a>remove</a>";'.
         _inline ''.
-        _inline '  if (td.firstChild.tagName === "A") {'.
-        _inline '    td.firstChild.innerHTML = newTxt;'.
+        _inline '  tr.cells[0].innerText   = cmd;'.
+        _inline '  if (cmd == "?") {'.
+        _inline '    tr.cells[0].style.color = "#CCC"; //grey'.
+        _inline '    tr.cells[2].innerHTML   = (context == "local") ? cmdLocal : cmdRemote;'.
         _inline '  } else {'.
-        _inline '    td.innerHTML = newTxt;'.
-        _inline '  }'.
-        _inline '}'.
-        _inline ''.
-        _inline '// Get how status should affect object counter'.
-        _inline 'StageHelper.prototype.getStatusImpact = function (status) {'.
-        _inline '  if (typeof status !== "string" '.
-        _inline '    || status.length !== 1 '.
-        _inline '    || this.STATUS.isValid(status) ) {'.
-        _inline '    alert("Unknown status");'.
-        _inline '  } else {'.
-        _inline '    return (status !== this.STATUS.reset) ? 1 : 0;'.
-        _inline '  }'.
-        _inline '}'.
-        _inline ''.
-        _inline '// Update table line'.
-        _inline 'StageHelper.prototype.updateRow = function (row, newStatus) {'.
-        _inline '  var oldStatus = row.cells[this.col.status].innerText;'.
-        _inline ''.
-        _inline '  if (oldStatus !== newStatus) {'.
-        _inline '    this.updateRowStatus(row, newStatus);'.
-        _inline '    this.updateRowCommand(row, newStatus);'.
-        _inline '  } else if (!row.cells[this.col.cmd].children.length) {'.
-        _inline '    this.updateRowCommand(row, newStatus); // For initial run'.
-        _inline '  }'.
-        _inline ''.
-        _inline '  this.choiseCount += this.getStatusImpact(newStatus) - this.getStatusImpact(oldStatus);'.
-        _inline '}'.
-        _inline ''.
-        _inline '// Update Status cell (render set of commands)'.
-        _inline 'StageHelper.prototype.updateRowStatus = function (row, status) {'.
-        _inline '  row.cells[this.col.status].innerText = status;'.
-        _inline '  if (status === this.STATUS.reset) {'.
-        _inline '    row.cells[this.col.status].classList.remove(this.HIGHLIGHT_STYLE);'.
-        _inline '  } else {'.
-        _inline '    row.cells[this.col.status].classList.add(this.HIGHLIGHT_STYLE);'.
-        _inline '  }'.
-        _inline '}'.
-        _inline ''.
-        _inline '// Update Command cell (render set of commands)'.
-        _inline 'StageHelper.prototype.updateRowCommand = function (row, status) {'.
-        _inline '  var cell = row.cells[this.col.cmd];'.
-        _inline '  if (status === this.STATUS.reset) {'.
-        _inline '    cell.innerHTML = (row.className == "local") '.
-        _inline '      ? this.TEMPLATES.cmdLocal '.
-        _inline '      : this.TEMPLATES.cmdRemote;'.
-        _inline '  } else {'.
-        _inline '    cell.innerHTML = this.TEMPLATES.cmdReset;'.
+        _inline '    tr.cells[0].style.color = "";'.
+        _inline '    tr.cells[2].innerHTML   = cmdReset;'.
         _inline '  }'.
         _inline '}'.
         _inline ''.
         _inline '// Update menu items visibility'.
         _inline 'StageHelper.prototype.updateMenu = function () {'.
-        _inline '  this.dom.commitBtn.style.display    = (this.choiseCount > 0) ? "" : "none";'.
-        _inline '  this.dom.commitAllBtn.style.display = (this.choiseCount > 0) ? "none" : "";'.
-        _inline '  this.dom.fileCounter.innerHTML      = this.choiseCount.toString();'.
+        _inline '  if (this.choiseCount > 0) {'.
+        _inline '    document.getElementById(this.commitNodeId).style.display    = "inline";'.
+        _inline '    document.getElementById(this.commitAllNodeId).style.display = "none";'.
+        _inline '  } else {'.
+        _inline '    document.getElementById(this.commitNodeId).style.display    = "none";'.
+        _inline '    document.getElementById(this.commitAllNodeId).style.display = "inline";'.
+        _inline '  }'.
         _inline '}'.
         _inline ''.
-        _inline '// Submit stage state to the server'.
+        _inline '// Submin stage state to the server'.
         _inline 'StageHelper.prototype.submit = function () {'.
-        _inline '  submitSapeventForm(this.collectData(), this.formAction);'.
+        _inline '  var data = this.collectData();'.
+        _inline '  submitSapeventForm(data, this.formAction);'.
         _inline '}'.
         _inline ''.
         _inline '// Extract data from the table'.
         _inline 'StageHelper.prototype.collectData = function () {'.
+        _inline '  var stage = document.getElementById(this.tabId);'.
         _inline '  var data  = {};'.
-        _inline '  this.iterateStageTab(false, function (row) {'.
-        _inline '    data[row.cells[this.col.name].innerText] = row.cells[this.col.status].innerText;'.
-        _inline '  });'.
+        _inline ''.
+        _inline '  for (var i = 0; i < stage.rows.length; i++) {'.
+        _inline '    var row = stage.rows[i];'.
+        _inline '    if (row.parentNode.tagName == "THEAD") continue;'.
+        _inline '    data[row.cells[1].innerText] = row.cells[0].innerText;'.
+        _inline '  }'.
+        _inline ''.
         _inline '  return data;'.
-        _inline '}'.
-        _inline ''.
-        _inline '// Table iteration helper'.
-        _inline 'StageHelper.prototype.iterateStageTab = function (changeMode, cb /*, ...*/) {'.
-        _inline '  '.
-        _inline '  var restArgs = Array.prototype.slice.call(arguments, 2);'.
-        _inline '  var table    = this.dom.stageTab;'.
-        _inline ''.
-        _inline '  if (changeMode) {'.
-        _inline '    var scrollOffset = window.pageYOffset;'.
-        _inline '    this.dom.stageTab.style.display = "none";'.
-        _inline '    // var stageTabParent = this.dom.stageTab.parentNode;'.
-        _inline '    // table = stageTabParent.removeChild(this.dom.stageTab);'.
-        _inline '  }'.
-        _inline ''.
-        _inline '  for (var b = 0, bN = table.tBodies.length; b < bN; b++) {'.
-        _inline '    var tbody = table.tBodies[b];'.
-        _inline '    for (var r = 0, rN = tbody.rows.length; r < rN; r++) {'.
-        _inline '      args = [tbody.rows[r]].concat(restArgs);'.
-        _inline '      cb.apply(this, args); // callback'.
-        _inline '    }'.
-        _inline '  }'.
-        _inline ''.
-        _inline '  if (changeMode) {'.
-        _inline '    this.dom.stageTab.style.display = "";'.
-        _inline '    // stageTabParent.appendChild(table);'.
-        _inline '    window.scrollTo(0, scrollOffset);'.
-        _inline '  }'.
         _inline '}'.
       WHEN OTHERS.
         lcx_exception=>raise( |No inline resource: { iv_asset_name }| ).
@@ -33148,10 +32203,6 @@ CLASS lcl_gui_chunk_lib DEFINITION FINAL.
       RETURNING VALUE(ro_html)        TYPE REF TO lcl_html
       RAISING   lcx_exception.
 
-    CLASS-METHODS render_js_error_banner
-      RETURNING VALUE(ro_html)        TYPE REF TO lcl_html
-      RAISING   lcx_exception.
-
 ENDCLASS. "lcl_gui_chunk_lib
 
 CLASS lcl_gui_chunk_lib IMPLEMENTATION.
@@ -33316,20 +32367,11 @@ CLASS lcl_gui_chunk_lib IMPLEMENTATION.
       lv_error = iv_error.
     ENDIF.
 
-    ro_html->add( '<div class="dummydiv error">' ).
+    ro_html->add( '<div class="dummydiv attention">' ).
     ro_html->add( |{ lcl_html=>icon( 'alert/red' ) } Error: { lv_error }| ).
     ro_html->add( '</div>' ).
 
   ENDMETHOD. "render_error
-
-  METHOD render_js_error_banner.
-    CREATE OBJECT ro_html.
-    ro_html->add( '<div id="js-error-banner" class="dummydiv error">' ).
-    ro_html->add( |{ lcl_html=>icon( 'alert/red' ) }| &&
-                  ' If this does not disappear soon,' &&
-                  ' then there is a JS init error, please log an issue' ).
-    ro_html->add( '</div>' ).
-  ENDMETHOD. "render_js_error_stub
 
 ENDCLASS. "lcl_gui_chunk_lib
 
@@ -33515,7 +32557,7 @@ CLASS lcl_gui_page IMPLEMENTATION.
     IF lo_script IS BOUND AND lo_script->is_empty( ) = abap_false.
       ro_html->add( '<script type="text/javascript">' ).
       ro_html->add( lo_script ).
-      ro_html->add( 'confirmInitialized();' ).
+      ro_html->add( 'debugOutput("js: OK");' ).
       ro_html->add( '</script>' ).
     ENDIF.
 
@@ -34048,16 +33090,12 @@ CLASS lcl_repo_content_browser IMPLEMENTATION.
                    <ls_tadir>     LIKE LINE OF lt_tadir.
 
 
-* todo, offline projects should have an dot abapgit too
-    lt_tadir = lcl_tadir=>read(
-      iv_package = mo_repo->get_package( )
-      io_dot     = lcl_dot_abapgit=>build_default( sy-langu ) ).
-
+    lt_tadir = lcl_tadir=>read( mo_repo->get_package( ) ).
     LOOP AT lt_tadir ASSIGNING <ls_tadir>.
       APPEND INITIAL LINE TO rt_repo_items ASSIGNING <ls_repo_item>.
       <ls_repo_item>-obj_type = <ls_tadir>-object.
       <ls_repo_item>-obj_name = <ls_tadir>-obj_name.
-      <ls_repo_item>-path     = <ls_tadir>-path.
+      <ls_repo_item>-path     = '/' && <ls_tadir>-path. " Add root anchor
       <ls_repo_item>-sortkey  = c_sortkey-default.      " Default sort key
     ENDLOOP.
 
@@ -35377,7 +34415,6 @@ CLASS lcl_gui_view_repo_content DEFINITION FINAL.
                  toggle_hide_files TYPE string VALUE 'toggle_hide_files' ##NO_TEXT,
                  toggle_folders    TYPE string VALUE 'toggle_folders' ##NO_TEXT,
                  toggle_changes    TYPE string VALUE 'toggle_changes' ##NO_TEXT,
-                 display_more      TYPE string VALUE 'display_more' ##NO_TEXT,
                END OF c_actions.
 
     METHODS constructor
@@ -35389,8 +34426,6 @@ CLASS lcl_gui_view_repo_content DEFINITION FINAL.
     DATA: mo_repo         TYPE REF TO lcl_repo,
           mv_cur_dir      TYPE string,
           mv_hide_files   TYPE abap_bool,
-          mv_max_lines    TYPE i,
-          mv_max_setting  TYPE i,
           mv_show_folders TYPE abap_bool,
           mv_changes_only TYPE abap_bool.
 
@@ -35439,19 +34474,12 @@ CLASS lcl_gui_view_repo_content IMPLEMENTATION.
 
   METHOD constructor.
 
-    DATA lo_settings TYPE REF TO lcl_settings.
-
     super->constructor( ).
 
     mo_repo         = lcl_app=>repo_srv( )->get( iv_key ).
     mv_cur_dir      = '/'. " Root
     mv_hide_files   = lcl_app=>user( )->get_hide_files( ).
     mv_changes_only = lcl_app=>user( )->get_changes_only( ).
-
-    " Read global settings to get max # of objects to be listed
-    lo_settings     = lcl_app=>settings( )->read( ).
-    mv_max_lines    = lo_settings->get_max_lines( ).
-    mv_max_setting  = mv_max_lines.
 
   ENDMETHOD. "constructor
 
@@ -35474,9 +34502,6 @@ CLASS lcl_gui_view_repo_content IMPLEMENTATION.
       WHEN c_actions-toggle_changes.    " Toggle changes only view
         mv_changes_only = lcl_app=>user( )->toggle_changes_only( ).
         ev_state        = gc_event_state-re_render.
-      WHEN c_actions-display_more.      " Increase MAX lines limit
-        mv_max_lines    = mv_max_lines + mv_max_setting.
-        ev_state        = gc_event_state-re_render.
     ENDCASE.
 
   ENDMETHOD. "lif_gui_page~on_event
@@ -35489,11 +34514,15 @@ CLASS lcl_gui_view_repo_content IMPLEMENTATION.
           lv_lstate     TYPE char1,
           lv_rstate     TYPE char1,
           lv_max        TYPE abap_bool,
-          lv_max_str    TYPE string,
-          lv_add_str    TYPE string,
-          lo_log        TYPE REF TO lcl_log.
+          lo_log        TYPE REF TO lcl_log,
+          lo_settings   TYPE REF TO lcl_settings,
+          lv_max_lines  TYPE i.
 
     FIELD-SYMBOLS <ls_item> LIKE LINE OF lt_repo_items.
+
+    " Read global settings to get max # of objects to be listed
+    lo_settings = lcl_app=>settings( )->read( ).
+    lv_max_lines = lo_settings->get_max_lines( ).
 
     " Reinit, for the case of type change
     mo_repo = lcl_app=>repo_srv( )->get( mo_repo->get_key( ) ).
@@ -35539,7 +34568,7 @@ CLASS lcl_gui_view_repo_content IMPLEMENTATION.
           ro_html->add( render_empty_package( ) ).
         ELSE.
           LOOP AT lt_repo_items ASSIGNING <ls_item>.
-            IF mv_max_lines > 0 AND sy-tabix > mv_max_lines.
+            IF lv_max_lines > 0 AND sy-tabix > lv_max_lines.
               lv_max = abap_true.
               EXIT. " current loop
             ENDIF.
@@ -35550,19 +34579,11 @@ CLASS lcl_gui_view_repo_content IMPLEMENTATION.
         ro_html->add( '</table>' ).
 
         IF lv_max = abap_true.
-          ro_html->add( '<div class = "dummydiv">' ).
-          IF mv_max_lines = 1.
-            lv_max_str = '1 object'.
+          IF lv_max_lines = 1.
+            ro_html->add( |Only 1 object shown in list (Set in Advanced > Settings )| ).
           ELSE.
-            lv_max_str = |first { mv_max_lines } objects|.
+            ro_html->add( |Only first { lv_max_lines } objects shown in list (Set in Advanced > Settings )| ).
           ENDIF.
-          lv_add_str = |+{ mv_max_setting }|.
-          ro_html->add( |Only { lv_max_str } shown in list. Display {
-            lcl_html=>a( iv_txt = lv_add_str iv_act = c_actions-display_more )
-            } more. (Set in Advanced > {
-            lcl_html=>a( iv_txt = 'Settings' iv_act = gc_action-go_settings )
-            } )| ).
-          ro_html->add( '</div>' ).
         ENDIF.
 
         ro_html->add( '</div>' ).
@@ -35660,8 +34681,10 @@ CLASS lcl_gui_view_repo_content IMPLEMENTATION.
                            iv_act = |{ gc_action-repo_remote_change }?{ lv_key }| ).
       lo_tb_advanced->add( iv_txt = 'Make off-line'
                            iv_act = |{ gc_action-repo_remote_detach }?{ lv_key }| ).
-      lo_tb_advanced->add( iv_txt = 'Force stage'
-                           iv_act = |{ gc_action-go_stage }?{ lv_key }| ).
+      IF iv_rstate IS INITIAL AND iv_lstate IS INITIAL.
+        lo_tb_advanced->add( iv_txt = 'Force stage'
+                             iv_act = |{ gc_action-go_stage }?{ lv_key }| ).
+      ENDIF.
     ELSE.
       lo_tb_advanced->add( iv_txt = 'Make on-line'
                            iv_act = |{ gc_action-repo_remote_attach }?{ lv_key }| ).
@@ -36136,13 +35159,10 @@ CLASS lcl_gui_page_commit IMPLEMENTATION.
     lt_stage = mo_stage->get_all( ).
 
     ro_html->add( '<table class="stage_tab">' ).
-    ro_html->add( '<thead>' ).
-    ro_html->add( '<tr>').
-    ro_html->add( '<th colspan="2">Staged files</th>').
+    ro_html->add( '<tr class="title firstrow">').
+    ro_html->add( '<td colspan="2">Staged files</td>').
     ro_html->add( '</tr>' ).
-    ro_html->add( '</thead>' ).
 
-    ro_html->add( '<tbody>' ).
     LOOP AT lt_stage ASSIGNING <ls_stage>.
       ro_html->add( '<tr>' ).
       ro_html->add( '<td class="method">' ).
@@ -36153,7 +35173,6 @@ CLASS lcl_gui_page_commit IMPLEMENTATION.
       ro_html->add( '</td>' ).
       ro_html->add( '</tr>' ).
     ENDLOOP.
-    ro_html->add( '</tbody>' ).
 
     ro_html->add( '</table>' ).
 
@@ -38768,26 +37787,19 @@ CLASS lcl_gui_page_stage DEFINITION FINAL INHERITING FROM lcl_gui_page.
     METHODS:
       render_list
         RETURNING VALUE(ro_html) TYPE REF TO lcl_html,
-
       render_file
-        IMPORTING iv_context     TYPE string
-                  is_file        TYPE ty_file
-                  is_item        TYPE ty_item OPTIONAL
+        IMPORTING is_file        TYPE ty_file
+                  iv_context     TYPE string
         RETURNING VALUE(ro_html) TYPE REF TO lcl_html,
-
-      render_actions
+      render_menu
         RETURNING VALUE(ro_html) TYPE REF TO lcl_html,
-
       read_last_changed_by
         IMPORTING is_file        TYPE ty_file
-        RETURNING VALUE(rv_user) TYPE xubname,
+        RETURNING VALUE(rv_user) TYPE xubname.
 
-      process_stage_list
-        IMPORTING it_postdata TYPE cnht_post_data_tab
-        RAISING   lcx_exception,
-
-      build_menu
-        RETURNING VALUE(ro_menu) TYPE REF TO lcl_html_toolbar.
+    METHODS process_stage_list
+      IMPORTING it_postdata TYPE cnht_post_data_tab
+      RAISING   lcx_exception.
 
 ENDCLASS.
 
@@ -38796,10 +37808,10 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
   METHOD constructor.
 
     super->constructor( ).
-
     ms_control-page_title = 'STAGE'.
-    mo_repo               = io_repo.
-    ms_files              = lcl_stage_logic=>get( mo_repo ).
+    mo_repo = io_repo.
+
+    ms_files = lcl_stage_logic=>get( mo_repo ).
 
     CREATE OBJECT mo_stage
       EXPORTING
@@ -38808,20 +37820,7 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
 
     GET TIME STAMP FIELD mv_ts.
 
-    ms_control-page_menu  = build_menu( ).
-
   ENDMETHOD.
-
-  METHOD build_menu.
-
-    CREATE OBJECT ro_menu.
-
-    IF lines( ms_files-local ) > 0.
-      ro_menu->add( iv_txt = |All diffs|
-                    iv_act = |{ gc_action-go_diff }?key={ mo_repo->get_key( ) }| ).
-    ENDIF.
-
-  ENDMETHOD. "build_menu
 
   METHOD lif_gui_page~on_event.
 
@@ -38903,27 +37902,25 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
 
     CREATE OBJECT ro_html.
 
-    ro_html->add( '<table id="stageTab" class="stage_tab w100">' ).
+    ro_html->add( '<table id="stage_tab" class="stage_tab">' ).
 
     " Local changes
     LOOP AT ms_files-local ASSIGNING <ls_local>.
       AT FIRST.
-        ro_html->add( '<thead><tr class="local">' ).
-        ro_html->add( '<th>Type</th>' ).
-        ro_html->add( '<th>Files to add (click to see diff)</th>' ).
-        ro_html->add( '<th>Changed by</th>' ).
-        ro_html->add( '<th></th>' ). " Status
-        ro_html->add( '<th class="cmd">' ).
-        ro_html->add( '<a>add</a>&#x2193; <a>reset</a>&#x2193;' ).
-        ro_html->add( '</th>' ).
-        ro_html->add( '</tr></thead>' ).
-        ro_html->add( '<tbody>' ).
+        ro_html->add('<thead><tr>').
+        ro_html->add('<th></th><th colspan="2">LOCAL</th>' ).
+        ro_html->add('<th>' ).
+        IF lines( ms_files-local ) > 1.
+          ro_html->add_a( iv_txt = |{ lines( ms_files-local ) } diffs|
+                          iv_act = |{ gc_action-go_diff }?key={ mo_repo->get_key( ) }| ).
+        ENDIF.
+        ro_html->add('</th>').
+        ro_html->add('<th>Last changed by</th>').
+        ro_html->add('</tr></thead>').
+        ro_html->add('<tbody class="local">').
       ENDAT.
 
-      ro_html->add( render_file(
-        iv_context = 'local'
-        is_file    = <ls_local>-file
-        is_item    = <ls_local>-item ) ). " TODO Refactor, unify structure
+      ro_html->add( render_file( is_file = <ls_local>-file iv_context = 'local' ) ).
 
       AT LAST.
         ro_html->add('</tbody>').
@@ -38933,20 +37930,13 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
     " Remote changes
     LOOP AT ms_files-remote ASSIGNING <ls_remote>.
       AT FIRST.
-        ro_html->add( '<thead><tr class="remote">' ).
-        ro_html->add( '<th></th>' ). " Type
-        ro_html->add( '<th colspan="2">Files to remove or non-code</th>' ).
-        ro_html->add( '<th></th>' ). " Status
-        ro_html->add( '<th class="cmd">' ).
-        ro_html->add( '<a>ignore</a>&#x2193; <a>remove</a>&#x2193; <a>reset</a>&#x2193;' ).
-        ro_html->add( '</th>' ).
-        ro_html->add( '</tr></thead>' ).
-        ro_html->add( '<tbody>' ).
+        ro_html->add('<thead><tr>').
+        ro_html->add('<th></th><th colspan="3">REMOTE</th>' ).
+        ro_html->add('</tr></thead>').
+        ro_html->add('<tbody class="remote">').
       ENDAT.
 
-      ro_html->add( render_file(
-        iv_context = 'remote'
-        is_file    = <ls_remote> ) ).
+      ro_html->add( render_file( is_file = <ls_remote> iv_context = 'remote' ) ).
 
       AT LAST.
         ro_html->add('</tbody>').
@@ -38959,32 +37949,31 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
 
   METHOD render_file.
 
-    DATA: lv_param    TYPE string,
-          lv_filename TYPE string.
+    DATA: lv_param TYPE string,
+          lv_user  TYPE xubname.
 
     CREATE OBJECT ro_html.
 
-    lv_filename = is_file-path && is_file-filename.
-
     ro_html->add( |<tr class="{ iv_context }">| ).
+    ro_html->add( |<td class="status" style="color: #CCC">?</td>| ).
+    ro_html->add( |<td>{ is_file-path && is_file-filename }</td>| ).
 
     CASE iv_context.
       WHEN 'local'.
-        lv_param    = lcl_html_action_utils=>file_encode( iv_key  = mo_repo->get_key( )
-                                                          ig_file = is_file ).
-        lv_filename = lcl_html=>a( iv_txt = lv_filename
-                                   iv_act = |{ gc_action-go_diff }?{ lv_param }| ).
-        ro_html->add( |<td class="type">{ is_item-obj_type }</td>| ).
-        ro_html->add( |<td class="name">{ lv_filename }</td>| ).
-        ro_html->add( |<td class="user">{ read_last_changed_by( is_file ) }</td>| ).
+        lv_param = lcl_html_action_utils=>file_encode( iv_key  = mo_repo->get_key( )
+                                                       ig_file = is_file ).
+        ro_html->add( '<td class="cmd"><a>add</a></td>' ).
+        ro_html->add( '<td>' ).
+        ro_html->add_a( iv_txt = 'diff' iv_act = |{ gc_action-go_diff }?{ lv_param }| ).
+        ro_html->add( '</td>' ).
+
+        lv_user = read_last_changed_by( is_file ).
+        ro_html->add( |<td>{ lv_user }</td> | ).
       WHEN 'remote'.
-        ro_html->add( '<td class="type">-</td>' ).  " Dummy for object type
-        ro_html->add( |<td class="name">{ lv_filename }</td>| ).
-        ro_html->add( '<td></td>' ).                " Dummy for changed-by
+        ro_html->add( '<td class="cmd"><a>ignore</a><a>remove</a></td>' ).
+        ro_html->add( |<td><span class="grey">-</span></td>| ).
     ENDCASE.
 
-    ro_html->add( |<td class="status">?</td>| ).
-    ro_html->add( '<td class="cmd"></td>' ). " Command added in JS
     ro_html->add( '</tr>' ).
 
   ENDMETHOD.  "render_file
@@ -38995,53 +37984,31 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
 
     ro_html->add( '<div class="repo">' ).
     ro_html->add( lcl_gui_chunk_lib=>render_repo_top( mo_repo ) ).
-    ro_html->add( lcl_gui_chunk_lib=>render_js_error_banner( ) ).
-
-    ro_html->add( '<div class="stage-container">' ).
-    ro_html->add( render_actions( ) ).
+    ro_html->add( render_menu( ) ).
     ro_html->add( render_list( ) ).
-    ro_html->add( '</div>' ).
-
     ro_html->add( '</div>' ).
 
   ENDMETHOD.      "render_content
 
-  METHOD render_actions.
-
-    DATA: lv_local_count TYPE i,
-          lv_add_all_txt TYPE string.
+  METHOD render_menu.
 
     CREATE OBJECT ro_html.
-    lv_local_count = lines( ms_files-local ).
-    IF lv_local_count > 0.
-      lv_add_all_txt = |Add all and commit ({ lv_local_count })|.
-      " Otherwise empty, but the element (id) is preserved for JS
-    ENDIF.
 
-    ro_html->add( '<table class="w100 margin-v5"><tr>' ).
-
-    " Action buttons
-    ro_html->add( '<td class="indent5em">' ).
-    ro_html->add_a( iv_act   = 'errorStub(event)' " Will be reinit by JS
+    ro_html->add( '<div class="paddings">' ).
+    ro_html->add_a( iv_act   = 'gHelper.submit();'
                     iv_typ   = gc_action_type-onclick
-                    iv_id    = 'commitButton'
+                    iv_id    = 'act_commit'
                     iv_style = 'display: none'
-                    iv_txt   = 'Commit (<span id="fileCounter"></span>)'
+                    iv_txt   = 'Commit'
                     iv_opt   = gc_html_opt-strong ) ##NO_TEXT.
-    ro_html->add_a( iv_act = |{ c_action-stage_all }|
-                    iv_id  = 'commitAllButton'
-                    iv_txt = lv_add_all_txt ) ##NO_TEXT.
-    ro_html->add( '</td>' ).
+    IF lines( ms_files-local ) > 0.
+      ro_html->add_a( iv_act = |{ c_action-stage_all }|
+                      iv_id  = 'act_commit_all'
+                      iv_txt = 'Add all and commit') ##NO_TEXT.
+    ENDIF.
+    ro_html->add( '</div>' ).
 
-    " Filter bar
-    ro_html->add( '<td class="right">' ).
-    ro_html->add( '<input class="stage-filter" id="objectSearch"' &&
-                  ' type="search" placeholder="Filter objects">' ).
-    ro_html->add( '</td>' ).
-
-    ro_html->add( '</tr></table>' ).
-
-  ENDMETHOD.      "render_actions
+  ENDMETHOD.      "render_menu
 
   METHOD scripts.
 
@@ -39049,16 +38016,10 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
 
     ro_html->add( 'var gStageParams = {' ).
     ro_html->add( |  seed:            "stage{ mv_ts }",| ).
+    ro_html->add( '  stageTabId:      "stage_tab",' ).
     ro_html->add( '  formAction:      "stage_commit",' ).
-
-    ro_html->add( '  ids: {' ).
-    ro_html->add( '    stageTab:      "stageTab",' ).
-    ro_html->add( '    commitBtn:     "commitButton",' ).
-    ro_html->add( '    commitAllBtn:  "commitAllButton",' ).
-    ro_html->add( '    objectSearch:  "objectSearch",' ).
-    ro_html->add( '    fileCounter:   "fileCounter"' ).
-    ro_html->add( '  }' ).
-
+    ro_html->add( '  commitNodeId:    "act_commit",' ).
+    ro_html->add( '  commitAllNodeId: "act_commit_all"' ).
     ro_html->add( '}' ).
     ro_html->add( 'var gHelper = new StageHelper(gStageParams);' ).
 
@@ -39076,8 +38037,6 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
       CATCH lcx_exception.
         CLEAR rv_user. "Should not raise errors if user last changed by was not found
     ENDTRY.
-
-    rv_user = to_lower( rv_user ).
   ENDMETHOD.
 
 ENDCLASS.
@@ -42158,16 +41117,16 @@ CLASS ltcl_file_status IMPLEMENTATION.
 
 ENDCLASS.   "ltcl_file_status
 
-CLASS ltcl_file_status2 DEFINITION
+CLASS ltcl_sap_package DEFINITION
   FOR TESTING RISK LEVEL HARMLESS DURATION SHORT FINAL
   INHERITING FROM cl_aunit_assert.
 
   PUBLIC SECTION.
-    METHODS check FOR TESTING RAISING lcx_exception.
+    METHODS check FOR TESTING.
 
 ENDCLASS.   "ltcl_sap_package
 
-CLASS ltcl_file_status2 IMPLEMENTATION.
+CLASS ltcl_sap_package IMPLEMENTATION.
 
   METHOD check.
 
@@ -42186,10 +41145,10 @@ CLASS ltcl_file_status2 IMPLEMENTATION.
     _append_result 'DOMA' 'ZDOMA1'  'X'   ' '   ' '  '$Z$'  '/'  'zdoma1.doma.xml'.
     _append_result 'DOMA' 'ZDOMA2'  ' '   'M'   ' '  '$Z$'  '/'  'zdoma2.doma.xml'.
 
-    lcl_file_status=>run_checks( io_log     = lo_log
-                                 it_results = lt_results
-                                 io_dot     = lcl_dot_abapgit=>build_default( sy-langu )
-                                 iv_top     = '$Z$' ).
+    lcl_sap_package=>check( io_log     = lo_log
+                            it_results = lt_results
+                            iv_start   = '/'
+                            iv_top     = '$Z$' ).
 
     assert_equals( act = lo_log->count( ) exp = 0 ).
 
@@ -42204,10 +41163,10 @@ CLASS ltcl_file_status2 IMPLEMENTATION.
     _append_result 'DOMA' 'ZDOMA1'  'X'   ' '   ' '  '$Z$'  '/'    'zdoma1.doma.xml'.
     _append_result 'DOMA' 'ZDOMA2'  ' '   'M'   ' '  '$Z$'  '/'    'zdoma2.doma.xml'.
 
-    lcl_file_status=>run_checks( io_log     = lo_log
-                                 it_results = lt_results
-                                 io_dot     = lcl_dot_abapgit=>build_default( sy-langu )
-                                 iv_top     = '$Z$' ).
+    lcl_sap_package=>check( io_log     = lo_log
+                            it_results = lt_results
+                            iv_start   = '/'
+                            iv_top     = '$Z$' ).
 
     " This one is not pure - incorrect path also triggers path vs package check
     assert_equals( act = lo_log->count( ) exp = 2 ).
@@ -42224,10 +41183,10 @@ CLASS ltcl_file_status2 IMPLEMENTATION.
     _append_result 'DOMA' '$$ZDOMA1'  'X'   ' '   ' '  '$Z$'  '/sub' '$$zdoma1.doma.xml'.
     _append_result 'DOMA' '$$ZDOMA2'  ' '   'M'   ' '  '$Z$'  '/'    '$$zdoma2.doma.xml'.
 
-    lcl_file_status=>run_checks( io_log     = lo_log
-                                 it_results = lt_results
-                                 io_dot     = lcl_dot_abapgit=>build_default( sy-langu )
-                                 iv_top     = '$Z$' ).
+    lcl_sap_package=>check( io_log     = lo_log
+                            it_results = lt_results
+                            iv_start   = '/'
+                            iv_top     = '$Z$' ).
 
     assert_equals( act = lo_log->count( ) exp = 1 ).
     assert_equals( act = lo_log->has_rc( '2' ) exp = abap_true ).
@@ -42243,10 +41202,10 @@ CLASS ltcl_file_status2 IMPLEMENTATION.
     _append_result 'DOMA' '$$ZDOMA1'  'X'   ' '   ' '  '$Z$'  '/'    '$$zdoma1.doma.xml'.
     _append_result 'DOMA' '$$ZDOMA2'  ' '   'M'   ' '  '$Z$'  '/'    '$$zdoma1.doma.xml'.
 
-    lcl_file_status=>run_checks( io_log     = lo_log
-                                 it_results = lt_results
-                                 io_dot     = lcl_dot_abapgit=>build_default( sy-langu )
-                                 iv_top     = '$Z$' ).
+    lcl_sap_package=>check( io_log     = lo_log
+                            it_results = lt_results
+                            iv_start   = '/'
+                            iv_top     = '$Z$' ).
 
     assert_equals( act = lo_log->count( ) exp = 1 ).
     assert_equals( act = lo_log->has_rc( '3' ) exp = abap_true ).
@@ -42261,16 +41220,13 @@ CLASS ltcl_file_status2 IMPLEMENTATION.
     _append_result 'CLAS' '$$ZCLASS1' 'X'   ' '   ' '  '$Z$'  '/'    '$$zclass1.clas.xml'.
     _append_result 'DOMA' '$$ZDOMA1'  'X'   ' '   ' '  '$Z$'  '/'    ''.
 
-    lcl_file_status=>run_checks( io_log     = lo_log
-                                 it_results = lt_results
-                                 io_dot     = lcl_dot_abapgit=>build_default( sy-langu )
-                                 iv_top     = '$Z$' ).
+    lcl_sap_package=>check( io_log     = lo_log
+                            it_results = lt_results
+                            iv_start   = '/'
+                            iv_top     = '$Z$' ).
 
-    assert_equals( act = lo_log->count( )
-                   exp = 1 ).
-
-    assert_equals( act = lo_log->has_rc( '4' )
-                   exp = abap_true ).
+    assert_equals( act = lo_log->count( ) exp = 1 ).
+    assert_equals( act = lo_log->has_rc( '4' ) exp = abap_true ).
 
   ENDMETHOD.  " check.
 
@@ -44058,5 +43014,5 @@ AT SELECTION-SCREEN.
   ENDIF.
 
 ****************************************************
-* abapmerge - 2017-02-19T08:08:35.331Z
+* abapmerge - 2017-02-11T11:09:32.125Z
 ****************************************************

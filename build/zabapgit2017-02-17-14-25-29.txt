@@ -10953,9 +10953,6 @@ CLASS lcl_objects_super DEFINITION ABSTRACT.
       corr_insert
         IMPORTING iv_package TYPE devclass
         RAISING   lcx_exception,
-      tadir_insert
-        IMPORTING iv_package TYPE devclass
-        RAISING   lcx_exception,
       jump_se11
         IMPORTING iv_radio TYPE string
                   iv_field TYPE string
@@ -12001,25 +11998,6 @@ CLASS lcl_objects_super IMPLEMENTATION.
       cl_abap_classdescr=>describe_by_object_ref( me )->get_relative_name( ).
     rs_metadata-version = 'v1.0.0' ##no_text.
   ENDMETHOD.                    "get_metadata
-
-  METHOD tadir_insert.
-
-    CALL FUNCTION 'TR_TADIR_INTERFACE'
-      EXPORTING
-        wi_test_modus       = abap_false
-        wi_tadir_pgmid      = 'R3TR'
-        wi_tadir_object     = ms_item-obj_type
-        wi_tadir_obj_name   = ms_item-obj_name
-        wi_tadir_author     = sy-uname
-        wi_tadir_devclass   = iv_package
-        wi_tadir_masterlang = mv_language
-      EXCEPTIONS
-        OTHERS              = 1.
-    IF sy-subrc <> 0.
-      lcx_exception=>raise( 'error from TR_TADIR_INTERFACE' ).
-    ENDIF.
-
-  ENDMETHOD.
 
   METHOD corr_insert.
 
@@ -14682,7 +14660,6 @@ CLASS lcl_object_acid IMPLEMENTATION.
     lo_aab = create_object( ).
     lo_aab->enqueue( ).
     lo_aab->set_descript( lv_description ).
-    tadir_insert( iv_package ).
     lo_aab->save( ).
 
   ENDMETHOD.                    "lif_object~deserialize
@@ -19398,8 +19375,6 @@ CLASS lcl_object_fugr IMPLEMENTATION.
     FIELD-SYMBOLS: <lv_include> LIKE LINE OF lt_includes.
 
 
-    tadir_insert( iv_package ).
-
     io_xml->read( EXPORTING iv_name = 'INCLUDES'
                   CHANGING cg_data = lt_includes ).
 
@@ -21292,7 +21267,21 @@ CLASS lcl_object_nrob IMPLEMENTATION.
       lcx_exception=>raise( 'error from NUMBER_RANGE_OBJECT_CLOSE' ).
     ENDIF.
 
-    tadir_insert( iv_package ).
+    CALL FUNCTION 'TR_TADIR_INTERFACE'
+      EXPORTING
+        wi_test_modus       = abap_false
+        wi_tadir_pgmid      = 'R3TR'
+        wi_tadir_object     = 'NROB'
+        wi_tadir_obj_name   = ms_item-obj_name
+        wi_tadir_author     = sy-uname
+        wi_tadir_devclass   = iv_package
+        wi_tadir_masterlang = mv_language
+        wi_set_genflag      = abap_true
+      EXCEPTIONS
+        OTHERS              = 1.
+    IF sy-subrc <> 0.
+      lcx_exception=>raise( 'error from TR_TADIR_INTERFACE' ).
+    ENDIF.
 
   ENDMETHOD.                    "deserialize
 
@@ -22176,15 +22165,7 @@ CLASS lcl_object_sfbf IMPLEMENTATION.
 
   METHOD lif_object~changed_by.
 
-    DATA: ls_data TYPE sfw_bf.
-
-    ls_data = get( )->get_header_data( ).
-
-    rv_user = ls_data-changedby.
-
-    IF rv_user IS INITIAL.
-      rv_user = ls_data-author.
-    ENDIF.
+    rv_user = get( )->get_header_data( )-changedby.
 
   ENDMETHOD.
 
@@ -22351,10 +22332,7 @@ CLASS lcl_object_sfbf IMPLEMENTATION.
         im_sfw_bfc_tc = ls_sfw_bfc_tc ).
     lo_bf->set_parent_bfs( lt_parent_bfs ).
 
-* magic, see function module RS_CORR_INSERT, FORM get_current_devclass
-    SET PARAMETER ID 'EUK' FIELD iv_package.
     lo_bf->save_all( ).
-    SET PARAMETER ID 'EUK' FIELD ''.
 
     lcl_objects_activation=>add_item( ms_item ).
 
@@ -22362,21 +22340,18 @@ CLASS lcl_object_sfbf IMPLEMENTATION.
 
   METHOD lif_object~delete.
 
-    DATA: lv_bf     TYPE sfw_bfunction,
-          lt_delete TYPE sfw_bftab,
-          lt_msgtab TYPE sprot_u_tab.
+    DATA: lv_bf TYPE sfw_bfunction,
+          lo_bf TYPE REF TO cl_sfw_bf.
 
 
     lv_bf = ms_item-obj_name.
-    APPEND lv_bf TO lt_delete.
-
-    cl_sfw_activate=>delete_sfbf( EXPORTING p_bfuncts = lt_delete
-                                  IMPORTING p_msgtab = lt_msgtab ).
-
-    READ TABLE lt_msgtab WITH KEY severity = 'E' TRANSPORTING NO FIELDS.
-    IF sy-subrc = 0.
-      lcx_exception=>raise( 'Error deleting SFBF' ).
-    ENDIF.
+    TRY.
+        lo_bf = cl_sfw_bf=>get_bf( lv_bf ).
+        lo_bf->set_delete_flag( lv_bf ).
+        lo_bf->save_all( ).
+      CATCH cx_pak_invalid_data cx_pak_invalid_state cx_pak_not_authorized.
+        lcx_exception=>raise( 'Error deleting BF' ).
+    ENDTRY.
 
   ENDMETHOD.                    "delete
 
@@ -22436,15 +22411,7 @@ CLASS lcl_object_sfbs IMPLEMENTATION.
 
   METHOD lif_object~changed_by.
 
-    DATA: ls_data TYPE sfw_bs.
-
-    ls_data = get( )->get_header_data( ).
-
-    rv_user = ls_data-changedby.
-
-    IF rv_user IS INITIAL.
-      rv_user = ls_data-author.
-    ENDIF.
+    rv_user = get( )->get_header_data( )-changedby.
 
   ENDMETHOD.
 
@@ -22585,10 +22552,7 @@ CLASS lcl_object_sfbs IMPLEMENTATION.
     lo_bfs->set_assigned_bfs( lt_nested_bfs ).
     lo_bfs->set_nested_parent( lt_parent_bfs ).
 
-* magic, see function module RS_CORR_INSERT, FORM get_current_devclass
-    SET PARAMETER ID 'EUK' FIELD iv_package.
     lo_bfs->save_all( ).
-    SET PARAMETER ID 'EUK' FIELD ''.
 
     lcl_objects_activation=>add_item( ms_item ).
 
@@ -22596,21 +22560,18 @@ CLASS lcl_object_sfbs IMPLEMENTATION.
 
   METHOD lif_object~delete.
 
-    DATA: lv_bfset  TYPE sfw_bset,
-          lt_delete TYPE sfw_bstab,
-          lt_msgtab TYPE sprot_u_tab.
+    DATA: lv_bfset TYPE sfw_bset,
+          lo_bfs   TYPE REF TO cl_sfw_bfs.
 
 
     lv_bfset = ms_item-obj_name.
-    APPEND lv_bfset TO lt_delete.
-
-    cl_sfw_activate=>delete_sfbs( EXPORTING p_bsets = lt_delete
-                                  IMPORTING p_msgtab = lt_msgtab ).
-
-    READ TABLE lt_msgtab WITH KEY severity = 'E' TRANSPORTING NO FIELDS.
-    IF sy-subrc = 0.
-      lcx_exception=>raise( 'Error deleting SFBS' ).
-    ENDIF.
+    TRY.
+        lo_bfs = cl_sfw_bfs=>get_bfs( lv_bfset ).
+        lo_bfs->set_delete_flag( lv_bfset ).
+        lo_bfs->save_all( ).
+      CATCH cx_pak_invalid_data cx_pak_invalid_state cx_pak_not_authorized.
+        lcx_exception=>raise( 'Error deleting BF' ).
+    ENDTRY.
 
   ENDMETHOD.                    "delete
 
@@ -22628,6 +22589,8 @@ CLASS lcl_object_sfbs IMPLEMENTATION.
   METHOD lif_object~compare_to_remote_version.
     CREATE OBJECT ro_comparison_result TYPE lcl_null_comparison_result.
   ENDMETHOD.
+
+
 
 ENDCLASS.                    "lcl_object_SFBS IMPLEMENTATION
 
@@ -22670,15 +22633,7 @@ CLASS lcl_object_sfsw IMPLEMENTATION.
 
   METHOD lif_object~changed_by.
 
-    DATA: ls_data TYPE sfw_switch.
-
-
-    ls_data = get( )->get_header_data( ).
-
-    rv_user = ls_data-changedby.
-    IF rv_user IS INITIAL.
-      rv_user = ls_data-author.
-    ENDIF.
+    rv_user = get( )->get_header_data( )-changedby.
 
   ENDMETHOD.
 
@@ -22807,17 +22762,13 @@ CLASS lcl_object_sfsw IMPLEMENTATION.
     lo_switch->set_parent_bf( lt_parent_bf ).
     lo_switch->set_conflicts( lt_conflicts ).
 
-* magic, see function module RS_CORR_INSERT, FORM get_current_devclass
-    SET PARAMETER ID 'EUK' FIELD iv_package.
     lo_switch->save_all(
       EXCEPTIONS
         not_saved = 1
         OTHERS    = 2 ).
-    SET PARAMETER ID 'EUK' FIELD ''.
     IF sy-subrc <> 0.
       lcx_exception=>raise( 'error in CL_SFW_SW->SAVE_ALL' ).
     ENDIF.
-
 
     lcl_objects_activation=>add_item( ms_item ).
 
@@ -24208,7 +24159,7 @@ CLASS lcl_object_splo IMPLEMENTATION.
 
     SELECT SINGLE chgname1 FROM tsp1d INTO rv_user
       WHERE papart = ms_item-obj_name.
-    IF sy-subrc <> 0 OR rv_user IS INITIAL.
+    IF sy-subrc <> 0.
       rv_user = c_user_unknown.
     ENDIF.
 
@@ -24273,14 +24224,12 @@ CLASS lcl_object_splo IMPLEMENTATION.
 
     lv_obj_name = ms_item-obj_name.
 
-    tadir_insert( iv_package ).
-
-*    CALL FUNCTION 'TR_TADIR_POPUP_ENTRY_E071'
-*      EXPORTING
-*        wi_e071_pgmid     = 'R3TR'
-*        wi_e071_object    = ms_item-obj_type
-*        wi_e071_obj_name  = lv_obj_name
-*        wi_tadir_devclass = iv_package.
+    CALL FUNCTION 'TR_TADIR_POPUP_ENTRY_E071'
+      EXPORTING
+        wi_e071_pgmid     = 'R3TR'
+        wi_e071_object    = ms_item-obj_type
+        wi_e071_obj_name  = lv_obj_name
+        wi_tadir_devclass = iv_package.
 
   ENDMETHOD.                    "lif_object~deserialize
 
@@ -24537,8 +24486,7 @@ CLASS lcl_object_ssfo IMPLEMENTATION.
       li_node = li_iterator->get_next( ).
     ENDWHILE.
 
-    tadir_insert( iv_package ).
-
+* todo, iv_package?
     lv_formname = ms_item-obj_name.
     lo_sf->enqueue( suppress_corr_check = space
                     master_language     = mv_language
@@ -24817,6 +24765,7 @@ CLASS lcl_object_susc IMPLEMENTATION.
 
   METHOD lif_object~get_metadata.
     rs_metadata = get_metadata( ).
+    rs_metadata-delete_tadir = abap_true.
   ENDMETHOD.                    "lif_object~get_metadata
 
   METHOD lif_object~exists.
@@ -24845,6 +24794,9 @@ CLASS lcl_object_susc IMPLEMENTATION.
     SELECT SINGLE * FROM tobct INTO ls_tobct
       WHERE oclss = ms_item-obj_name
       AND langu = mv_language.
+*    IF sy-subrc <> 0.
+*     lcx_exception=>raise( 'TOBCT no english description' ).
+*    ENDIF.
 
     io_xml->add( iv_name = 'TOBC'
                  ig_data = ls_tobc ).
@@ -24865,8 +24817,6 @@ CLASS lcl_object_susc IMPLEMENTATION.
                   CHANGING cg_data = ls_tobc ).
     io_xml->read( EXPORTING iv_name = 'TOBCT'
                   CHANGING cg_data = ls_tobct ).
-
-    tadir_insert( iv_package ).
 
     lv_objectname = ms_item-obj_name.
     CALL FUNCTION 'SUSR_COMMEDITCHECK'
@@ -25044,8 +24994,6 @@ CLASS lcl_object_suso IMPLEMENTATION.
                   CHANGING  cg_data = lt_tobjvordat ).
     io_xml->read( EXPORTING iv_name = 'TOBJVOR'
                   CHANGING  cg_data = lt_tobjvor ).
-
-    tadir_insert( iv_package ).
 
     lv_objectname = ms_item-obj_name.
     CALL FUNCTION 'SUSR_COMMEDITCHECK'
@@ -27938,8 +27886,6 @@ CLASS lcl_object_wdya IMPLEMENTATION.
           li_prop->set_value( <ls_property>-value ).
         ENDLOOP.
 
-        tadir_insert( iv_package ).
-
         lo_app->if_wdy_md_lockable_object~save_to_database( ).
       CATCH cx_wdy_md_exception.
         lcx_exception=>raise( 'error saving WDYA' ).
@@ -28767,8 +28713,6 @@ CLASS lcl_object_wdyn IMPLEMENTATION.
                   CHANGING cg_data = mt_components ).
     io_xml->read( EXPORTING iv_name  = 'SOURCES'
                   CHANGING cg_data = mt_sources ).
-
-    tadir_insert( iv_package ).
 
     ls_component-comp_metadata-definition-author = sy-uname.
     ls_component-comp_metadata-definition-createdon = sy-datum.
@@ -31978,9 +31922,7 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '.crossout         { text-decoration: line-through !important; }'.
         _inline '.right            { text-align:right; }'.
         _inline '.paddings         { padding: 0.5em 0.5em; }'.
-        _inline '.pad-sides        { padding-left: 0.3em; padding-right: 0.3em; }'.
-        _inline '.margin-v5        { margin-top: 0.5em; margin-bottom: 0.5em; }'.
-        _inline '.indent5em        { padding-left: 0.5em; }'.
+        _inline '.pad-sides        { padding: 0 0.3em; }'.
         _inline '.pad4px           { padding: 4px; }'.
         _inline '.w100             { width: 100%; }'.
         _inline '.w40              { width: 40%; }'.
@@ -32293,9 +32235,6 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '}'.
         _inline ''.
         _inline '/* STAGE */'.
-        _inline 'div.stage-container { width: 850px; }'.
-        _inline 'input.stage-filter { width: 18em; }'.
-        _inline ''.
         _inline '.stage_tab {'.
         _inline '  border: 1px solid #DDD;'.
         _inline '  background: #fff;'.
@@ -32324,8 +32263,6 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '  color: #444 !important;'.
         _inline '  font-weight: bold;'.
         _inline '}'.
-        _inline ''.
-        _inline '.stage_tab td.cmd {  cursor: pointer; }'.
         _inline '.stage_tab td.cmd a { padding: 0px 4px; }'.
         _inline '.stage_tab th.cmd a { padding: 0px 4px; }'.
         _inline '.stage_tab td.method { color: #ccc; }'.
@@ -32707,37 +32644,6 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '}'.
         _inline ''.
         _inline '/**********************************************************'.
-        _inline ' * Performance utils (for debugging)'.
-        _inline ' **********************************************************/'.
-        _inline ''.
-        _inline 'var gPerf = [];'.
-        _inline ''.
-        _inline 'function perfOut(prefix) {'.
-        _inline '  var totals = {};'.
-        _inline '  for (var i = gPerf.length - 1; i >= 0; i--) {'.
-        _inline '    if (!totals[gPerf[i].name]) totals[gPerf[i].name] = {count: 0, time: 0};'.
-        _inline '    totals[gPerf[i].name].time  += gPerf[i].time;'.
-        _inline '    totals[gPerf[i].name].count += 1;'.
-        _inline '  }'.
-        _inline ''.
-        _inline '  var keys = Object.keys(totals);'.
-        _inline '  for (var i = keys.length - 1; i >= 0; i--) {'.
-        _inline '    console.log(prefix '.
-        _inline '      + " " + keys[i] + ": " '.
-        _inline '      + totals[keys[i]].time.toFixed(3) + "ms"'.
-        _inline '      + " (" + totals[keys[i]].count.toFixed() +")");'.
-        _inline '  }'.
-        _inline '}'.
-        _inline ''.
-        _inline 'function perfLog(name, startTime) {'.
-        _inline '  gPerf.push({name: name, time: window.performance.now() - startTime});'.
-        _inline '}'.
-        _inline ''.
-        _inline 'function perfClear() {'.
-        _inline '  gPerf = [];'.
-        _inline '}'.
-        _inline ''.
-        _inline '/**********************************************************'.
         _inline ' * STAGE PAGE Logic'.
         _inline ' **********************************************************/'.
         _inline ''.
@@ -32763,19 +32669,12 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '  // Constants'.
         _inline '  this.HIGHLIGHT_STYLE = "highlight";'.
         _inline '  this.STATUS = {'.
-        _inline '    add:    "A",'.
-        _inline '    remove: "R",'.
-        _inline '    ignore: "I",'.
-        _inline '    reset:  "?",'.
-        _inline '    isValid: function (status) { return "ARI?".indexOf(status) == -1; }'.
+        _inline '    "add":    "A",'.
+        _inline '    "remove": "R",'.
+        _inline '    "ignore": "I",'.
+        _inline '    "reset":  "?"'.
         _inline '  };'.
         _inline '  '.
-        _inline '  this.TEMPLATES = {'.
-        _inline '    cmdReset:  "<a>reset</a>",'.
-        _inline '    cmdLocal:  "<a>add</a>",'.
-        _inline '    cmdRemote: "<a>ignore</a><a>remove</a>"'.
-        _inline '  };'.
-        _inline ''.
         _inline '  this.setHooks();'.
         _inline '}'.
         _inline ''.
@@ -32811,32 +32710,34 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline ''.
         _inline '// Re-store table state on entering the page'.
         _inline 'StageHelper.prototype.onPageLoad = function() {'.
+        _inline ''.
         _inline '  var data = window.sessionStorage && JSON.parse(window.sessionStorage.getItem(this.pageSeed));'.
         _inline ''.
-        _inline '  this.iterateStageTab(true, function (row) {'.
-        _inline '    var status = data && data[row.cells[this.col.name].innerText];'.
-        _inline '    this.updateRow(row, status || this.STATUS.reset);'.
-        _inline '  });'.
+        _inline '  if (data) {'.
+        _inline '    this.iterateStageTab(function (row) {'.
+        _inline '      var status = data[row.cells[this.col.name].innerText];'.
+        _inline '      this.updateRow(row, status || this.STATUS.reset);'.
+        _inline '    });'.
+        _inline '    debugOutput("StageHelper.onPageLoad from Storage");'.
+        _inline ''.
+        _inline '  } else { // Render initial commands'.
+        _inline ''.
+        _inline '    this.iterateStageTab(function (row) {'.
+        _inline '      this.updateRow(row, this.STATUS.reset);'.
+        _inline '    });'.
+        _inline '    debugOutput("StageHelper.onPageLoad initial state");'.
+        _inline '  }'.
         _inline ''.
         _inline '  this.updateMenu();'.
-        _inline '  debugOutput("StageHelper.onPageLoad: " + ((data) ? "from Storage" : "initial state"));'.
         _inline '}'.
         _inline ''.
         _inline '// Table event handler, change status'.
         _inline 'StageHelper.prototype.onTableClick = function (event) {'.
         _inline '  var target = event.target || event.srcElement;'.
-        _inline '  if (!target) return;'.
+        _inline '  if (!target || target.tagName != "A") return;'.
         _inline ''.
-        _inline '  if (target.tagName === "A") {'.
-        _inline '    var td = target.parentNode;'.
-        _inline '  } else if (target.tagName === "TD") {'.
-        _inline '    var td = target;'.
-        _inline '    if (td.children.length === 1 && td.children[0].tagName === "A") {'.
-        _inline '      target = td.children[0];'.
-        _inline '    } else return;'.
-        _inline '  } else return;'.
-        _inline ''.
-        _inline '  if (["TD","TH"].indexOf(td.tagName) == -1 || td.className != "cmd") return;'.
+        _inline '  var td = target.parentNode;'.
+        _inline '  if (!td || ["TD","TH"].indexOf(td.tagName) == -1 || td.className != "cmd") return;'.
         _inline '  '.
         _inline '  var status    = this.STATUS[target.innerText]; // Convert anchor text to status'.
         _inline '  var targetRow = td.parentNode;'.
@@ -32844,9 +32745,9 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '  if (td.tagName === "TD") {'.
         _inline '    this.updateRow(targetRow, status);'.
         _inline '  } else { // TH'.
-        _inline '    this.iterateStageTab(true, function (row) {'.
-        _inline '      if (row.style.display !== "none"            // Not filtered out'.
-        _inline '        && row.className === targetRow.className  // Same context as header'.
+        _inline '    this.iterateStageTab(function (row) {'.
+        _inline '      if (row.style.display !== "none"                      // Not filtered out'.
+        _inline '        && row.className === targetRow.className            // Same context as header'.
         _inline '        ) {'.
         _inline '        this.updateRow(row, status);'.
         _inline '      }'.
@@ -32863,7 +32764,7 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '    || e.type === "keypress" && e.which === 13 ) { '.
         _inline ''.
         _inline '    this.lastSearchValue = e.target.value;'.
-        _inline '    this.iterateStageTab(true, this.applyFilterToRow, e.target.value);'.
+        _inline '    this.iterateStageTab(this.applyFilterToRow, e.target.value);'.
         _inline '  }'.
         _inline '}'.
         _inline ''.
@@ -32874,10 +32775,14 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline ''.
         _inline '  if (filter) {'.
         _inline '    newTxt = origTxt.replace(filter, "<mark>"+filter+"</mark>");'.
-        _inline '    row.style.display = (newTxt !== origTxt) ? "" : "none";'.
+        _inline '    if (newTxt !== origTxt) { // fits filter'.
+        _inline '      row.style.display = "table-row";'.
+        _inline '    } else {'.
+        _inline '      row.style.display = "none";'.
+        _inline '    }'.
         _inline '  } else { // No filter -> just reset the value'.
         _inline '    newTxt            = origTxt;'.
-        _inline '    row.style.display = ""; // default, visible'.
+        _inline '    row.style.display = "table-row";'.
         _inline '  }'.
         _inline ''.
         _inline '  if (td.firstChild.tagName === "A") {'.
@@ -32891,7 +32796,7 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline 'StageHelper.prototype.getStatusImpact = function (status) {'.
         _inline '  if (typeof status !== "string" '.
         _inline '    || status.length !== 1 '.
-        _inline '    || this.STATUS.isValid(status) ) {'.
+        _inline '    || "ARI?".indexOf(status) == -1) {'.
         _inline '    alert("Unknown status");'.
         _inline '  } else {'.
         _inline '    return (status !== this.STATUS.reset) ? 1 : 0;'.
@@ -32903,41 +32808,37 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '  var oldStatus = row.cells[this.col.status].innerText;'.
         _inline ''.
         _inline '  if (oldStatus !== newStatus) {'.
-        _inline '    this.updateRowStatus(row, newStatus);'.
+        _inline '    row.cells[this.col.status].innerText = newStatus;'.
+        _inline '    if (newStatus === this.STATUS.reset) {'.
+        _inline '      row.cells[this.col.status].classList.remove(this.HIGHLIGHT_STYLE);'.
+        _inline '    } else {'.
+        _inline '      row.cells[this.col.status].classList.add(this.HIGHLIGHT_STYLE);'.
+        _inline '    }'.
         _inline '    this.updateRowCommand(row, newStatus);'.
-        _inline '  } else if (!row.cells[this.col.cmd].children.length) {'.
+        _inline '  } else if (!row.cells[this.col.cmd].innerText) {'.
         _inline '    this.updateRowCommand(row, newStatus); // For initial run'.
         _inline '  }'.
         _inline ''.
         _inline '  this.choiseCount += this.getStatusImpact(newStatus) - this.getStatusImpact(oldStatus);'.
         _inline '}'.
         _inline ''.
-        _inline '// Update Status cell (render set of commands)'.
-        _inline 'StageHelper.prototype.updateRowStatus = function (row, status) {'.
-        _inline '  row.cells[this.col.status].innerText = status;'.
-        _inline '  if (status === this.STATUS.reset) {'.
-        _inline '    row.cells[this.col.status].classList.remove(this.HIGHLIGHT_STYLE);'.
-        _inline '  } else {'.
-        _inline '    row.cells[this.col.status].classList.add(this.HIGHLIGHT_STYLE);'.
-        _inline '  }'.
-        _inline '}'.
-        _inline ''.
-        _inline '// Update Command cell (render set of commands)'.
+        _inline '// Update command cell (render set of commands)'.
         _inline 'StageHelper.prototype.updateRowCommand = function (row, status) {'.
-        _inline '  var cell = row.cells[this.col.cmd];'.
+        _inline '  var CMD_RESET  = "<a>reset</a>";'.
+        _inline '  var CMD_LOCAL  = "<a>add</a>";'.
+        _inline '  var CMD_REMOTE = "<a>ignore</a><a>remove</a>";'.
+        _inline ''.
         _inline '  if (status === this.STATUS.reset) {'.
-        _inline '    cell.innerHTML = (row.className == "local") '.
-        _inline '      ? this.TEMPLATES.cmdLocal '.
-        _inline '      : this.TEMPLATES.cmdRemote;'.
+        _inline '    row.cells[this.col.cmd].innerHTML = (row.className == "local") ? CMD_LOCAL : CMD_REMOTE;'.
         _inline '  } else {'.
-        _inline '    cell.innerHTML = this.TEMPLATES.cmdReset;'.
+        _inline '    row.cells[this.col.cmd].innerHTML = CMD_RESET;'.
         _inline '  }'.
         _inline '}'.
         _inline ''.
         _inline '// Update menu items visibility'.
         _inline 'StageHelper.prototype.updateMenu = function () {'.
-        _inline '  this.dom.commitBtn.style.display    = (this.choiseCount > 0) ? "" : "none";'.
-        _inline '  this.dom.commitAllBtn.style.display = (this.choiseCount > 0) ? "none" : "";'.
+        _inline '  this.dom.commitBtn.style.display    = (this.choiseCount > 0) ? "inline" : "none";'.
+        _inline '  this.dom.commitAllBtn.style.display = (this.choiseCount > 0) ? "none" : "inline";'.
         _inline '  this.dom.fileCounter.innerHTML      = this.choiseCount.toString();'.
         _inline '}'.
         _inline ''.
@@ -32949,37 +32850,20 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '// Extract data from the table'.
         _inline 'StageHelper.prototype.collectData = function () {'.
         _inline '  var data  = {};'.
-        _inline '  this.iterateStageTab(false, function (row) {'.
+        _inline '  this.iterateStageTab(function (row) {'.
         _inline '    data[row.cells[this.col.name].innerText] = row.cells[this.col.status].innerText;'.
         _inline '  });'.
         _inline '  return data;'.
         _inline '}'.
         _inline ''.
-        _inline '// Table iteration helper'.
-        _inline 'StageHelper.prototype.iterateStageTab = function (changeMode, cb /*, ...*/) {'.
-        _inline '  '.
-        _inline '  var restArgs = Array.prototype.slice.call(arguments, 2);'.
-        _inline '  var table    = this.dom.stageTab;'.
-        _inline ''.
-        _inline '  if (changeMode) {'.
-        _inline '    var scrollOffset = window.pageYOffset;'.
-        _inline '    this.dom.stageTab.style.display = "none";'.
-        _inline '    // var stageTabParent = this.dom.stageTab.parentNode;'.
-        _inline '    // table = stageTabParent.removeChild(this.dom.stageTab);'.
-        _inline '  }'.
-        _inline ''.
-        _inline '  for (var b = 0, bN = table.tBodies.length; b < bN; b++) {'.
-        _inline '    var tbody = table.tBodies[b];'.
+        _inline '// table iteration helper'.
+        _inline 'StageHelper.prototype.iterateStageTab = function (cb /*, ...*/) {'.
+        _inline '  for (var b = 0, bN = this.dom.stageTab.tBodies.length; b < bN; b++) {'.
+        _inline '    var tbody = this.dom.stageTab.tBodies[b];'.
         _inline '    for (var r = 0, rN = tbody.rows.length; r < rN; r++) {'.
-        _inline '      args = [tbody.rows[r]].concat(restArgs);'.
+        _inline '      args = [tbody.rows[r]].concat(Array.prototype.slice.call(arguments, 1));'.
         _inline '      cb.apply(this, args); // callback'.
         _inline '    }'.
-        _inline '  }'.
-        _inline ''.
-        _inline '  if (changeMode) {'.
-        _inline '    this.dom.stageTab.style.display = "";'.
-        _inline '    // stageTabParent.appendChild(table);'.
-        _inline '    window.scrollTo(0, scrollOffset);'.
         _inline '  }'.
         _inline '}'.
       WHEN OTHERS.
@@ -33325,9 +33209,7 @@ CLASS lcl_gui_chunk_lib IMPLEMENTATION.
   METHOD render_js_error_banner.
     CREATE OBJECT ro_html.
     ro_html->add( '<div id="js-error-banner" class="dummydiv error">' ).
-    ro_html->add( |{ lcl_html=>icon( 'alert/red' ) }| &&
-                  ' If this does not disappear soon,' &&
-                  ' then there is a JS init error, please log an issue' ).
+    ro_html->add( |{ lcl_html=>icon( 'alert/red' ) } JS init error, please log an issue| ).
     ro_html->add( '</div>' ).
   ENDMETHOD. "render_js_error_stub
 
@@ -38768,26 +38650,22 @@ CLASS lcl_gui_page_stage DEFINITION FINAL INHERITING FROM lcl_gui_page.
     METHODS:
       render_list
         RETURNING VALUE(ro_html) TYPE REF TO lcl_html,
-
       render_file
         IMPORTING iv_context     TYPE string
                   is_file        TYPE ty_file
                   is_item        TYPE ty_item OPTIONAL
         RETURNING VALUE(ro_html) TYPE REF TO lcl_html,
-
-      render_actions
+      render_menu
         RETURNING VALUE(ro_html) TYPE REF TO lcl_html,
-
       read_last_changed_by
         IMPORTING is_file        TYPE ty_file
-        RETURNING VALUE(rv_user) TYPE xubname,
+        RETURNING VALUE(rv_user) TYPE xubname.
 
-      process_stage_list
-        IMPORTING it_postdata TYPE cnht_post_data_tab
-        RAISING   lcx_exception,
-
-      build_menu
-        RETURNING VALUE(ro_menu) TYPE REF TO lcl_html_toolbar.
+    METHODS process_stage_list
+      IMPORTING it_postdata TYPE cnht_post_data_tab
+      RAISING   lcx_exception.
+    METHODS build_menu
+      RETURNING VALUE(ro_menu) TYPE REF TO lcl_html_toolbar.
 
 ENDCLASS.
 
@@ -38903,21 +38781,19 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
 
     CREATE OBJECT ro_html.
 
-    ro_html->add( '<table id="stageTab" class="stage_tab w100">' ).
+    ro_html->add( '<table id="stageTab" class="stage_tab">' ).
 
     " Local changes
     LOOP AT ms_files-local ASSIGNING <ls_local>.
       AT FIRST.
-        ro_html->add( '<thead><tr class="local">' ).
-        ro_html->add( '<th>Type</th>' ).
-        ro_html->add( '<th>Files to add (click to see diff)</th>' ).
-        ro_html->add( '<th>Changed by</th>' ).
-        ro_html->add( '<th></th>' ). " Status
-        ro_html->add( '<th class="cmd">' ).
-        ro_html->add( '<a>add</a>&#x2193; <a>reset</a>&#x2193;' ).
-        ro_html->add( '</th>' ).
-        ro_html->add( '</tr></thead>' ).
-        ro_html->add( '<tbody>' ).
+        ro_html->add('<thead><tr class="local">').
+        ro_html->add('<th>Type</th>').
+        ro_html->add('<th>Files to add (click to see diff)</th>' ).
+        ro_html->add('<th>Changed by</th>').
+        ro_html->add('<th></th>' ). " Status
+        ro_html->add('<th class="cmd">&#x2193;<a>add</a>/<a>reset</a>&#x2193;</th>' ).
+        ro_html->add('</tr></thead>').
+        ro_html->add('<tbody>').
       ENDAT.
 
       ro_html->add( render_file(
@@ -38937,9 +38813,8 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
         ro_html->add( '<th></th>' ). " Type
         ro_html->add( '<th colspan="2">Files to remove or non-code</th>' ).
         ro_html->add( '<th></th>' ). " Status
-        ro_html->add( '<th class="cmd">' ).
-        ro_html->add( '<a>ignore</a>&#x2193; <a>remove</a>&#x2193; <a>reset</a>&#x2193;' ).
-        ro_html->add( '</th>' ).
+        ro_html->add( '<th class="cmd">' &&
+                      '&#x2193;<a>ignore</a><a>remove</a><a>reset</a>&#x2193;</th>' ).
         ro_html->add( '</tr></thead>' ).
         ro_html->add( '<tbody>' ).
       ENDAT.
@@ -38996,52 +38871,38 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
     ro_html->add( '<div class="repo">' ).
     ro_html->add( lcl_gui_chunk_lib=>render_repo_top( mo_repo ) ).
     ro_html->add( lcl_gui_chunk_lib=>render_js_error_banner( ) ).
-
-    ro_html->add( '<div class="stage-container">' ).
-    ro_html->add( render_actions( ) ).
+    ro_html->add( render_menu( ) ).
     ro_html->add( render_list( ) ).
-    ro_html->add( '</div>' ).
-
     ro_html->add( '</div>' ).
 
   ENDMETHOD.      "render_content
 
-  METHOD render_actions.
+  METHOD render_menu.
 
-    DATA: lv_local_count TYPE i,
-          lv_add_all_txt TYPE string.
+    DATA lv_local_count TYPE i.
 
     CREATE OBJECT ro_html.
     lv_local_count = lines( ms_files-local ).
-    IF lv_local_count > 0.
-      lv_add_all_txt = |Add all and commit ({ lv_local_count })|.
-      " Otherwise empty, but the element (id) is preserved for JS
-    ENDIF.
 
-    ro_html->add( '<table class="w100 margin-v5"><tr>' ).
-
-    " Action buttons
-    ro_html->add( '<td class="indent5em">' ).
+    ro_html->add( '<div class="paddings">' ).
     ro_html->add_a( iv_act   = 'errorStub(event)' " Will be reinit by JS
                     iv_typ   = gc_action_type-onclick
                     iv_id    = 'commitButton'
                     iv_style = 'display: none'
                     iv_txt   = 'Commit (<span id="fileCounter"></span>)'
                     iv_opt   = gc_html_opt-strong ) ##NO_TEXT.
-    ro_html->add_a( iv_act = |{ c_action-stage_all }|
-                    iv_id  = 'commitAllButton'
-                    iv_txt = lv_add_all_txt ) ##NO_TEXT.
-    ro_html->add( '</td>' ).
+    IF lv_local_count > 0.
+      ro_html->add_a( iv_act = |{ c_action-stage_all }|
+                      iv_id  = 'commitAllButton'
+                      iv_txt = |Add all and commit ({ lv_local_count })| ) ##NO_TEXT.
+    ENDIF.
+    ro_html->add( '</div>' ).
 
-    " Filter bar
-    ro_html->add( '<td class="right">' ).
-    ro_html->add( '<input class="stage-filter" id="objectSearch"' &&
-                  ' type="search" placeholder="Filter objects">' ).
-    ro_html->add( '</td>' ).
+    ro_html->add( '<div>' ).
+    ro_html->add( '<input id="objectSearch" type="search" placeholder="Filter objects">' ).
+    ro_html->add( '</div>' ).
 
-    ro_html->add( '</tr></table>' ).
-
-  ENDMETHOD.      "render_actions
+  ENDMETHOD.      "render_menu
 
   METHOD scripts.
 
@@ -44058,5 +43919,5 @@ AT SELECTION-SCREEN.
   ENDIF.
 
 ****************************************************
-* abapmerge - 2017-02-19T08:08:35.331Z
+* abapmerge - 2017-02-17T14:25:27.542Z
 ****************************************************
