@@ -25011,18 +25011,7 @@ CLASS lcl_object_tobj IMPLEMENTATION.
   ENDMETHOD.  "lif_object~has_changed_since
 
   METHOD lif_object~changed_by.
-
-    DATA: lv_type_pos TYPE i.
-
-    lv_type_pos = strlen( ms_item-obj_name ) - 1.
-
-    SELECT SINGLE luser FROM objh INTO rv_user
-      WHERE objectname = ms_item-obj_name(lv_type_pos)
-      AND objecttype = ms_item-obj_name+lv_type_pos.    "#EC CI_GENBUFF
-    IF sy-subrc <> 0.
-      rv_user = c_user_unknown.
-    ENDIF.
-
+    rv_user = c_user_unknown. " todo
   ENDMETHOD.
 
   METHOD lif_object~get_metadata.
@@ -37947,10 +37936,10 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
 
   METHOD read_last_changed_by.
     DATA: ls_local_file TYPE ty_file_item,
-          lt_files_local type ty_files_item_tt.
+          t_files_local type ty_files_item_tt.
     TRY.
-        lt_files_local = mo_repo->get_files_local( ).
-        READ TABLE lt_files_local INTO ls_local_file WITH KEY file = is_file.
+        t_files_local = mo_repo->get_files_local( ).
+        READ TABLE t_files_local INTO ls_local_file WITH KEY file = is_file.
         IF sy-subrc = 0.
           rv_user = lcl_objects=>changed_by( ls_local_file-item ).
         ENDIF.
@@ -42934,5 +42923,5 @@ AT SELECTION-SCREEN.
   ENDIF.
 
 ****************************************************
-* abapmerge - 2017-02-09T14:00:45.649Z
+* abapmerge - 2017-02-07T15:58:49.014Z
 ****************************************************

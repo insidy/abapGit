@@ -3,7 +3,7 @@ REPORT zabapgit LINE-SIZE 100.
 * See http://www.abapgit.org
 
 CONSTANTS: gc_xml_version  TYPE string VALUE 'v1.0.0',      "#EC NOTEXT
-           gc_abap_version TYPE string VALUE 'v1.27.0'.     "#EC NOTEXT
+           gc_abap_version TYPE string VALUE 'v1.26.2'.     "#EC NOTEXT
 
 ********************************************************************************
 * The MIT License (MIT)
@@ -402,7 +402,6 @@ CONSTANTS: BEGIN OF gc_action,
              go_debuginfo           TYPE string VALUE 'go_debuginfo',
              go_settings            TYPE string VALUE 'go_settings',
              go_tutorial            TYPE string VALUE 'go_tutorial',
-
              jump                   TYPE string VALUE 'jump',
              jump_pkg               TYPE string VALUE 'jump_pkg',
            END OF gc_action.
@@ -2830,14 +2829,16 @@ CLASS lcl_log IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    ro_html->add( '<br>' ).
     LOOP AT mt_log ASSIGNING <ls_log>.
-      CONCATENATE <ls_log>-msgv1 <ls_log>-msgv2 <ls_log>-msgv3 <ls_log>-msgv4
-        INTO lv_string SEPARATED BY space.
-      ro_html->add( '<span class="error">' ).
-      ro_html->add_icon( iv_name = 'alert' iv_class = 'error' ). " warning CSS exists too
+      CONCATENATE <ls_log>-msgv1
+        <ls_log>-msgv2
+        <ls_log>-msgv3
+        <ls_log>-msgv4 INTO lv_string SEPARATED BY space.
       ro_html->add( lv_string ).
-      ro_html->add( '</span>' ).
+      ro_html->add( '<br>' ).
     ENDLOOP.
+    ro_html->add( '<br>' ).
 
   ENDMETHOD.
 
@@ -3263,7 +3264,6 @@ CLASS lcl_xml_pretty DEFINITION FINAL.
     CLASS-METHODS: print
       IMPORTING iv_xml           TYPE string
                 iv_ignore_errors TYPE abap_bool DEFAULT abap_true
-                iv_unpretty      TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(rv_xml)    TYPE string
       RAISING   lcx_exception.
 
@@ -3284,14 +3284,14 @@ CLASS lcl_xml_pretty IMPLEMENTATION.
 
     ASSERT NOT iv_xml IS INITIAL.
 
-    li_ixml    = cl_ixml=>create( ).
+    li_ixml = cl_ixml=>create( ).
     li_xml_doc = li_ixml->create_document( ).
 
     li_stream_factory = li_ixml->create_stream_factory( ).
-    li_istream        = li_stream_factory->create_istream_string( iv_xml ).
-    li_parser         = li_ixml->create_parser( stream_factory = li_stream_factory
-                                                istream        = li_istream
-                                                document       = li_xml_doc ).
+    li_istream = li_stream_factory->create_istream_string( iv_xml ).
+    li_parser = li_ixml->create_parser( stream_factory = li_stream_factory
+                                        istream        = li_istream
+                                        document       = li_xml_doc ).
     li_parser->set_normalizing( abap_true ).
     IF li_parser->parse( ) <> 0.
       IF iv_ignore_errors = abap_true.
@@ -3304,12 +3304,12 @@ CLASS lcl_xml_pretty IMPLEMENTATION.
     li_istream->close( ).
 
 
-    li_ostream  = li_stream_factory->create_ostream_cstring( rv_xml ).
+    li_ostream = li_stream_factory->create_ostream_cstring( rv_xml ).
 
     li_renderer = li_ixml->create_renderer( ostream  = li_ostream
                                             document = li_xml_doc ).
 
-    li_renderer->set_normalizing( boolc( iv_unpretty = abap_false ) ).
+    li_renderer->set_normalizing( abap_true ).
 
     li_renderer->render( ).
 
@@ -3946,7 +3946,7 @@ ENDCLASS.                    "lcl_user IMPLEMENTATION
 ****************************************************
 * abapmerge - ZABAPGIT_PERSISTENCE
 ****************************************************
-*&---------------------------------------------------------------------*
+*&----------------------------
 *&  Include           ZABAPGIT_PERSISTENCE
 *&---------------------------------------------------------------------*
 
@@ -4029,9 +4029,8 @@ CLASS lcl_persistence_db DEFINITION FINAL CREATE PRIVATE FRIENDS lcl_app.
         RAISING   lcx_exception.
 
   PRIVATE SECTION.
-    METHODS: validate_and_unprettify_xml
-      IMPORTING iv_xml        TYPE string
-      RETURNING VALUE(rv_xml) TYPE string
+    METHODS: validate_xml
+      IMPORTING iv_xml TYPE string
       RAISING   lcx_exception.
 
 ENDCLASS.
@@ -4781,32 +4780,29 @@ CLASS lcl_persistence_db IMPLEMENTATION.
 
   ENDMETHOD.
 
-  METHOD validate_and_unprettify_xml.
+  METHOD validate_xml.
 
-    rv_xml = lcl_xml_pretty=>print(
+    lcl_xml_pretty=>print(
       iv_xml           = iv_xml
-      iv_unpretty      = abap_true
       iv_ignore_errors = abap_false ).
 
-  ENDMETHOD.  " validate_and_unprettify_xml
+  ENDMETHOD.
 
   METHOD update.
 
-    DATA lv_data LIKE iv_data.
-
-    lv_data = validate_and_unprettify_xml( iv_data ).
+    validate_xml( iv_data ).
 
     lock( iv_type  = iv_type
           iv_value = iv_value ).
 
-    UPDATE (c_tabname) SET data_str = lv_data
-      WHERE type  = iv_type
-      AND   value = iv_value.
+    UPDATE (c_tabname) SET data_str = iv_data
+      WHERE type = iv_type
+      AND value = iv_value.
     IF sy-subrc <> 0.
       lcx_exception=>raise( 'DB update failed' ).
     ENDIF.
 
-  ENDMETHOD.  "update
+  ENDMETHOD.
 
   METHOD modify.
 
@@ -5301,8 +5297,7 @@ CLASS lcl_persistence_migrate IMPLEMENTATION.
 
   METHOD table_create.
 
-    DATA: lv_rc       LIKE sy-subrc,
-          lv_obj_name TYPE tadir-obj_name,
+    DATA: lv_obj_name TYPE tadir-obj_name,
           ls_dd02v    TYPE dd02v,
           ls_dd09l    TYPE dd09l,
           lt_dd03p    TYPE STANDARD TABLE OF dd03p WITH DEFAULT KEY.
@@ -5380,14 +5375,11 @@ CLASS lcl_persistence_migrate IMPLEMENTATION.
     CALL FUNCTION 'DDIF_TABL_ACTIVATE'
       EXPORTING
         name        = lcl_persistence_db=>c_tabname
-        auth_chk    = abap_false
-      IMPORTING
-        rc          = lv_rc
       EXCEPTIONS
         not_found   = 1
         put_failure = 2
         OTHERS      = 3.
-    IF sy-subrc <> 0 OR lv_rc <> 0.
+    IF sy-subrc <> 0.
       lcx_exception=>raise( 'migrate, error from DDIF_TABL_ACTIVATE' ).
     ENDIF.
 
@@ -6984,13 +6976,11 @@ ENDCLASS.
 CLASS lcl_stage_logic IMPLEMENTATION.
 
   METHOD get.
-
     rs_files-local  = io_repo->get_files_local( ).
     rs_files-remote = io_repo->get_files_remote( ).
     remove_identical( CHANGING cs_files = rs_files ).
-    remove_ignored( EXPORTING io_repo  = io_repo
-                    CHANGING  cs_files = rs_files ).
-
+    remove_ignored( EXPORTING io_repo = io_repo
+                    CHANGING cs_files = rs_files ).
   ENDMETHOD.
 
   METHOD count.
@@ -7014,14 +7004,10 @@ CLASS lcl_stage_logic IMPLEMENTATION.
       lv_index = sy-tabix.
 
       IF io_repo->get_dot_abapgit( )->is_ignored(
-          iv_path     = <ls_remote>-path
+          iv_path = <ls_remote>-path
           iv_filename = <ls_remote>-filename ) = abap_true.
         DELETE cs_files-remote INDEX lv_index.
-      ELSEIF <ls_remote>-path = gc_root_dir AND <ls_remote>-filename = gc_dot_abapgit.
-        " Remove .abapgit from remotes - it cannot be removed or ignored
-        DELETE cs_files-remote INDEX lv_index.
       ENDIF.
-
     ENDLOOP.
 
   ENDMETHOD.
@@ -7051,803 +7037,6 @@ CLASS lcl_stage_logic IMPLEMENTATION.
 
   ENDMETHOD.
 
-ENDCLASS.
-
-
-****************************************************
-* abapmerge - ZABAPGIT_2FA
-****************************************************
-*&---------------------------------------------------------------------*
-*&  Include           ZABAPGIT_2FA
-*&---------------------------------------------------------------------*
-
-"! Exception base class for two factor authentication related errors
-CLASS lcx_2fa_error DEFINITION INHERITING FROM cx_static_check.
-  PUBLIC SECTION.
-    METHODS:
-      constructor IMPORTING is_textid     LIKE textid OPTIONAL
-                            ix_previous   LIKE previous OPTIONAL
-                            iv_error_text TYPE csequence OPTIONAL,
-      get_text REDEFINITION.
-    DATA:
-      mv_text TYPE string READ-ONLY.
-  PROTECTED SECTION.
-    METHODS:
-      get_default_text RETURNING VALUE(rv_text) TYPE string.
-ENDCLASS.
-
-CLASS lcx_2fa_error IMPLEMENTATION.
-  METHOD constructor.
-    super->constructor( textid = is_textid previous = ix_previous ).
-    mv_text = iv_error_text.
-  ENDMETHOD.
-
-  METHOD get_text.
-    IF mv_text IS NOT INITIAL.
-      result = mv_text.
-    ELSEIF get_default_text( ) IS NOT INITIAL.
-      result = get_default_text( ).
-    ELSE.
-      result = super->get_text( ).
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD get_default_text.
-    rv_text = 'Error in two factor authentication.' ##NO_TEXT.
-  ENDMETHOD.
-ENDCLASS.
-
-CLASS lcx_2fa_auth_failed DEFINITION INHERITING FROM lcx_2fa_error FINAL.
-  PROTECTED SECTION.
-    METHODS:
-      get_default_text REDEFINITION.
-ENDCLASS.
-
-CLASS lcx_2fa_auth_failed IMPLEMENTATION.
-  METHOD get_default_text.
-    rv_text = 'Authentication failed using 2FA.' ##NO_TEXT.
-  ENDMETHOD.
-ENDCLASS.
-
-CLASS lcx_2fa_token_gen_failed DEFINITION INHERITING FROM lcx_2fa_error FINAL.
-  PROTECTED SECTION.
-    METHODS:
-      get_default_text REDEFINITION.
-ENDCLASS.
-
-CLASS lcx_2fa_token_gen_failed IMPLEMENTATION.
-  METHOD get_default_text.
-    rv_text = 'Two factor access token generation failed.' ##NO_TEXT.
-  ENDMETHOD.
-ENDCLASS.
-
-CLASS lcx_2fa_unsupported DEFINITION INHERITING FROM lcx_2fa_error FINAL.
-  PROTECTED SECTION.
-    METHODS:
-      get_default_text REDEFINITION.
-ENDCLASS.
-
-CLASS lcx_2fa_unsupported IMPLEMENTATION.
-  METHOD get_default_text.
-    rv_text = 'The service is not supported for two factor authentication.' ##NO_TEXT.
-  ENDMETHOD.
-ENDCLASS.
-
-CLASS lcx_2fa_token_del_failed DEFINITION INHERITING FROM lcx_2fa_error FINAL.
-  PROTECTED SECTION.
-    METHODS:
-      get_default_text REDEFINITION.
-ENDCLASS.
-
-CLASS lcx_2fa_token_del_failed IMPLEMENTATION.
-  METHOD get_default_text.
-    rv_text = 'Deleting previous access tokens failed.' ##NO_TEXT.
-  ENDMETHOD.
-ENDCLASS.
-
-CLASS lcx_2fa_communication_error DEFINITION INHERITING FROM lcx_2fa_error FINAL.
-  PROTECTED SECTION.
-    METHODS:
-      get_default_text REDEFINITION.
-ENDCLASS.
-
-CLASS lcx_2fa_communication_error IMPLEMENTATION.
-  METHOD get_default_text.
-    rv_text = 'Communication error.' ##NO_TEXT.
-  ENDMETHOD.
-ENDCLASS.
-
-CLASS lcx_2fa_illegal_state DEFINITION INHERITING FROM lcx_2fa_error FINAL.
-  PROTECTED SECTION.
-    METHODS:
-      get_default_text REDEFINITION.
-ENDCLASS.
-
-CLASS lcx_2fa_illegal_state IMPLEMENTATION.
-  METHOD get_default_text.
-    rv_text = 'Illegal state.' ##NO_TEXT.
-  ENDMETHOD.
-ENDCLASS.
-
-"! Defines a two factor authentication authenticator
-"! <p>
-"! Authenticators support one or multiple services and are able to generate access tokens using the
-"! service's API using the users username, password and two factor authentication token
-"! (app/sms/tokengenerator). With these access tokens the user can be authenticated to the service's
-"! implementation of the git http api, just like the "normal" password would.
-"! </p>
-"! <p>
-"! <em>LCL_2FA_AUTHENTICATOR_REGISTRY</em> can be used to find a suitable implementation for a given
-"! repository.
-"! </p>
-"! <p>
-"! Using the <em>begin</em> and <em>end</em> methods an internal session can be started and
-"! completed in which internal state necessary for multiple methods will be cached. This can be
-"! used to avoid having multiple http sessions between <em>authenticate</em> and
-"! <em>delete_access_tokens</em>.
-"! </p>
-INTERFACE lif_2fa_authenticator.
-  METHODS:
-    "! Generate an access token
-    "! @parameter iv_url | Repository url
-    "! @parameter iv_username | Username
-    "! @parameter iv_password | Password
-    "! @parameter iv_2fa_token | Two factor token
-    "! @parameter rv_access_token | Generated access token
-    "! @raising lcx_2fa_auth_failed | Authentication failed
-    "! @raising lcx_2fa_token_gen_failed | Token generation failed
-    authenticate IMPORTING iv_url                 TYPE string
-                           iv_username            TYPE string
-                           iv_password            TYPE string
-                           iv_2fa_token           TYPE string
-                 RETURNING VALUE(rv_access_token) TYPE string
-                 RAISING   lcx_2fa_auth_failed
-                           lcx_2fa_token_gen_failed
-                           lcx_2fa_communication_error,
-    "! Check if this authenticator instance supports the give repository url
-    "! @parameter iv_url | Repository url
-    "! @parameter rv_supported | Is supported
-    supports_url IMPORTING iv_url              TYPE string
-                 RETURNING VALUE(rv_supported) TYPE abap_bool,
-    "! Get a unique identifier for the service that hosts the repository
-    "! @parameter iv_url | Repository url
-    "! @parameter rv_id | Service id
-    "! @raising lcx_2fa_unsupported | Url is not supported
-    get_service_id_from_url IMPORTING iv_url       TYPE string
-                            RETURNING VALUE(rv_id) TYPE string
-                            RAISING   lcx_2fa_unsupported,
-    "! Check if two factor authentication is required
-    "! @parameter iv_url | Repository url
-    "! @parameter iv_username | Username
-    "! @parameter iv_password | Password
-    "! @parameter rv_required | 2FA is required
-    is_2fa_required IMPORTING iv_url             TYPE string
-                              iv_username        TYPE string
-                              iv_password        TYPE string
-                    RETURNING VALUE(rv_required) TYPE abap_bool
-                    RAISING   lcx_2fa_communication_error,
-    "! Delete all previously created access tokens for abapGit
-    "! @parameter iv_url | Repository url
-    "! @parameter iv_username | Username
-    "! @parameter iv_password | Password
-    "! @parameter iv_2fa_token | Two factor token
-    "! @raising lcx_2fa_token_del_failed | Token deletion failed
-    "! @raising lcx_2fa_auth_failed | Authentication failed
-    delete_access_tokens IMPORTING iv_url       TYPE string
-                                   iv_username  TYPE string
-                                   iv_password  TYPE string
-                                   iv_2fa_token TYPE string
-                         RAISING   lcx_2fa_token_del_failed
-                                   lcx_2fa_communication_error
-                                   lcx_2fa_auth_failed,
-    "! Begin an authenticator session that uses internal caching for authorizations
-    "! @raising lcx_2fa_illegal_state | Session already started
-    begin RAISING lcx_2fa_illegal_state,
-    "! End an authenticator session and clear internal caches
-    "! @raising lcx_2fa_illegal_state | Session not running
-    end RAISING lcx_2fa_illegal_state.
-ENDINTERFACE.
-
-"! Default <em>LIF_2FA-AUTHENTICATOR</em> implememtation
-CLASS lcl_2fa_authenticator_base DEFINITION
-  ABSTRACT
-  CREATE PUBLIC.
-
-  PUBLIC SECTION.
-    INTERFACES:
-      lif_2fa_authenticator.
-    ALIASES:
-      authenticate FOR lif_2fa_authenticator~authenticate,
-      supports_url FOR lif_2fa_authenticator~supports_url,
-      get_service_id_from_url FOR lif_2fa_authenticator~get_service_id_from_url,
-      is_2fa_required FOR lif_2fa_authenticator~is_2fa_required,
-      delete_access_tokens FOR lif_2fa_authenticator~delete_access_tokens,
-      begin FOR lif_2fa_authenticator~begin,
-      end FOR lif_2fa_authenticator~end.
-    METHODS:
-      "! @parameter iv_supported_url_regex | Regular expression to check if a repository url is
-      "!                                     supported, used for default implementation of
-      "!                                     <em>SUPPORTS_URL</em>
-      constructor IMPORTING iv_supported_url_regex TYPE clike.
-  PROTECTED SECTION.
-    CLASS-METHODS:
-      "! Helper method to raise class based exception after traditional exception was raised
-      "! <p>
-      "! <em>sy-msg...</em> must be set right before calling!
-      "! </p>
-      raise_comm_error_from_sy RAISING lcx_2fa_communication_error.
-    METHODS:
-      "! @parameter rv_running | Internal session is currently active
-      is_session_running RETURNING VALUE(rv_running) TYPE abap_bool.
-  PRIVATE SECTION.
-    DATA:
-      mo_url_regex       TYPE REF TO cl_abap_regex,
-      mv_session_running TYPE abap_bool.
-ENDCLASS.
-
-CLASS lcl_2fa_authenticator_base IMPLEMENTATION.
-  METHOD constructor.
-    CREATE OBJECT mo_url_regex
-      EXPORTING
-        pattern     = iv_supported_url_regex
-        ignore_case = abap_true.
-  ENDMETHOD.
-
-  METHOD authenticate.
-    RAISE EXCEPTION TYPE lcx_2fa_auth_failed. " Needs to be overwritten in subclasses
-  ENDMETHOD.
-
-  METHOD supports_url.
-    rv_supported = mo_url_regex->create_matcher( text = iv_url )->match( ).
-  ENDMETHOD.
-
-  METHOD get_service_id_from_url.
-    rv_id = 'UNKNOWN SERVICE'. " Please overwrite in subclasses
-  ENDMETHOD.
-
-  METHOD is_2fa_required.
-    rv_required = abap_false.
-  ENDMETHOD.
-
-  METHOD delete_access_tokens.
-    RAISE EXCEPTION TYPE lcx_2fa_token_del_failed. " Needs to be overwritten in subclasses
-  ENDMETHOD.
-
-  METHOD raise_comm_error_from_sy.
-    DATA: lv_error_msg TYPE string.
-
-    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
-            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4
-            INTO lv_error_msg.
-    RAISE EXCEPTION TYPE lcx_2fa_communication_error
-      EXPORTING
-        iv_error_text = |Communication error: { lv_error_msg }| ##NO_TEXT.
-  ENDMETHOD.
-
-  METHOD begin.
-    IF mv_session_running = abap_true.
-      RAISE EXCEPTION TYPE lcx_2fa_illegal_state.
-    ENDIF.
-
-    mv_session_running = abap_true.
-  ENDMETHOD.
-
-  METHOD end.
-    IF mv_session_running = abap_false.
-      RAISE EXCEPTION TYPE lcx_2fa_illegal_state.
-    ENDIF.
-
-    mv_session_running = abap_false.
-  ENDMETHOD.
-
-  METHOD is_session_running.
-    rv_running = mv_session_running.
-  ENDMETHOD.
-ENDCLASS.
-
-CLASS lcl_2fa_github_authenticator DEFINITION
-  INHERITING FROM lcl_2fa_authenticator_base
-  FINAL
-  CREATE PUBLIC.
-
-  PUBLIC SECTION.
-    METHODS:
-      constructor,
-      get_service_id_from_url REDEFINITION,
-      authenticate REDEFINITION,
-      is_2fa_required REDEFINITION,
-      delete_access_tokens REDEFINITION,
-      end REDEFINITION.
-  PROTECTED SECTION.
-  PRIVATE SECTION.
-    CONSTANTS:
-      gc_github_api_url              TYPE string VALUE `https://api.github.com/`,
-      gc_otp_header_name             TYPE string VALUE `X-Github-OTP`,
-      gc_restendpoint_authorizations TYPE string VALUE `/authorizations`.
-    CLASS-METHODS:
-      set_new_token_request IMPORTING ii_request   TYPE REF TO if_http_request,
-      get_token_from_response IMPORTING ii_response     TYPE REF TO if_http_response
-                              RETURNING VALUE(rv_token) TYPE string,
-      parse_repo_from_url IMPORTING iv_url              TYPE string
-                          RETURNING VALUE(rv_repo_name) TYPE string,
-      set_list_token_request IMPORTING ii_request TYPE REF TO if_http_request,
-      get_tobedel_tokens_from_resp IMPORTING ii_response   TYPE REF TO if_http_response
-                                   RETURNING VALUE(rt_ids) TYPE stringtab,
-      set_del_token_request IMPORTING ii_request  TYPE REF TO if_http_request
-                                      iv_token_id TYPE string.
-    METHODS:
-      get_authenticated_client IMPORTING iv_username      TYPE string
-                                         iv_password      TYPE string
-                                         iv_2fa_token     TYPE string
-                               RETURNING VALUE(ri_client) TYPE REF TO if_http_client
-                               RAISING   lcx_2fa_auth_failed
-                                         lcx_2fa_communication_error.
-    DATA:
-      mi_authenticated_session TYPE REF TO if_http_client.
-ENDCLASS.
-
-CLASS lcl_2fa_github_authenticator IMPLEMENTATION.
-  METHOD constructor.
-    super->constructor( '^https?://(www\.)?github.com.*$' ).
-  ENDMETHOD.
-
-  METHOD authenticate.
-    DATA: li_http_client           TYPE REF TO if_http_client,
-          lv_http_code             TYPE i,
-          lv_http_code_description TYPE string.
-
-    " 1. Try to login to GitHub API
-    li_http_client = get_authenticated_client( iv_username  = iv_username
-                                               iv_password  = iv_password
-                                               iv_2fa_token = iv_2fa_token ).
-
-    " 2. Create an access token which can be used instead of a password
-    " https://developer.github.com/v3/oauth_authorizations/#create-a-new-authorization
-
-    set_new_token_request( ii_request = li_http_client->request ).
-
-    li_http_client->send( EXCEPTIONS OTHERS = 1 ).
-    IF sy-subrc <> 0.
-      raise_comm_error_from_sy( ).
-    ENDIF.
-
-    li_http_client->receive( EXCEPTIONS OTHERS = 1 ).
-    IF sy-subrc <> 0.
-      raise_comm_error_from_sy( ).
-    ENDIF.
-
-    li_http_client->response->get_status(
-      IMPORTING
-        code   = lv_http_code
-        reason = lv_http_code_description ).
-    IF lv_http_code <> 201.
-      RAISE EXCEPTION TYPE lcx_2fa_token_gen_failed
-        EXPORTING
-          iv_error_text = |Token generation failed: { lv_http_code } { lv_http_code_description }|.
-    ENDIF.
-
-    rv_access_token = get_token_from_response( li_http_client->response ).
-    IF rv_access_token IS INITIAL.
-      RAISE EXCEPTION TYPE lcx_2fa_token_gen_failed
-        EXPORTING
-          iv_error_text = 'Token generation failed: parser error' ##NO_TEXT.
-    ENDIF.
-
-    " GitHub might need some time until the new token is ready to use, give it a second
-    CALL FUNCTION 'RZL_SLEEP'.
-  ENDMETHOD.
-
-  METHOD set_new_token_request.
-    DATA: lv_json_string TYPE string.
-
-    lv_json_string = `{"scopes":["repo"],"note":"Generated by abapGit","fingerprint":"abapGit2FA"}`.
-
-    ii_request->set_data( cl_abap_codepage=>convert_to( lv_json_string ) ).
-    ii_request->set_header_field( name  = if_http_header_fields_sap=>request_uri
-                                  value = gc_restendpoint_authorizations ).
-    ii_request->set_method( if_http_request=>co_request_method_post ).
-  ENDMETHOD.
-
-  METHOD set_list_token_request.
-    ii_request->set_header_field( name  = if_http_header_fields_sap=>request_uri
-                                  value = gc_restendpoint_authorizations ).
-    ii_request->set_method( if_http_request=>co_request_method_get ).
-  ENDMETHOD.
-
-  METHOD set_del_token_request.
-    DATA: lv_url TYPE string.
-
-    lv_url = |{ gc_restendpoint_authorizations }/{ iv_token_id }|.
-
-    ii_request->set_header_field( name  = if_http_header_fields_sap=>request_uri
-                                  value = lv_url ).
-    " Other methods than POST and GET do not have constants unfortunately
-    " ii_request->set_method( if_http_request=>co_request_method_delete ).
-    ii_request->set_method( 'DELETE' ).
-  ENDMETHOD.
-
-  METHOD get_token_from_response.
-    CONSTANTS: lc_search_regex TYPE string VALUE `.*"token":"([^"]*).*$`.
-    DATA: lv_response TYPE string,
-          lo_regex    TYPE REF TO cl_abap_regex,
-          lo_matcher  TYPE REF TO cl_abap_matcher.
-
-    lv_response = cl_abap_codepage=>convert_from( ii_response->get_data( ) ).
-
-    CREATE OBJECT lo_regex
-      EXPORTING
-        pattern = lc_search_regex.
-
-    lo_matcher = lo_regex->create_matcher( text = lv_response ).
-    IF lo_matcher->match( ) = abap_true.
-      rv_token = lo_matcher->get_submatch( 1 ).
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD get_tobedel_tokens_from_resp.
-    CONSTANTS: lc_search_regex TYPE string
-               VALUE `\{"id": ?(\d+)[^\{]*"app":\{[^\{^\}]*\}[^\{]*"fingerprint": ?` &
-               `"abapGit2FA"[^\{]*\}`.
-    DATA: lv_response TYPE string,
-          lo_regex    TYPE REF TO cl_abap_regex,
-          lo_matcher  TYPE REF TO cl_abap_matcher.
-
-    lv_response = cl_abap_codepage=>convert_from( ii_response->get_data( ) ).
-
-    CREATE OBJECT lo_regex
-      EXPORTING
-        pattern = lc_search_regex.
-
-    lo_matcher = lo_regex->create_matcher( text = lv_response ).
-    WHILE lo_matcher->find_next( ) = abap_true.
-      APPEND lo_matcher->get_submatch( 1 ) TO rt_ids.
-    ENDWHILE.
-  ENDMETHOD.
-
-  METHOD parse_repo_from_url.
-    CONSTANTS: lc_search_regex TYPE string VALUE 'https?:\/\/(www\.)?github.com\/(.*)$'.
-    DATA: lo_regex   TYPE REF TO cl_abap_regex,
-          lo_matcher TYPE REF TO cl_abap_matcher.
-
-    CREATE OBJECT lo_regex
-      EXPORTING
-        pattern = lc_search_regex.
-
-    lo_matcher = lo_regex->create_matcher( text = iv_url ).
-    IF lo_matcher->match( ) = abap_true.
-      rv_repo_name = lo_matcher->get_submatch( 1 ).
-    ELSE.
-      rv_repo_name = '???' ##NO_TEXT.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD get_service_id_from_url.
-    rv_id = 'github'.
-  ENDMETHOD.
-
-  METHOD is_2fa_required.
-    DATA: li_client       TYPE REF TO if_http_client,
-          lv_header_value TYPE string,
-          lo_settings     TYPE REF TO lcl_settings.
-
-    lo_settings = lcl_app=>settings( )->read( ).
-
-    cl_http_client=>create_by_url(
-      EXPORTING
-        url                = gc_github_api_url
-        ssl_id             = 'ANONYM'
-        proxy_host         = lo_settings->get_proxy_url( )
-        proxy_service      = lo_settings->get_proxy_port( )
-      IMPORTING
-        client             = li_client
-      EXCEPTIONS
-        argument_not_found = 1
-        plugin_not_active  = 2
-        internal_error     = 3
-        OTHERS             = 4 ).
-    IF sy-subrc <> 0.
-      raise_comm_error_from_sy( ).
-    ENDIF.
-
-    li_client->propertytype_logon_popup = if_http_client=>co_disabled.
-
-    " The request needs to use something other than GET and it needs to be send to an endpoint
-    " to trigger a SMS.
-    li_client->request->set_header_field( name  = if_http_header_fields_sap=>request_uri
-                                          value = gc_restendpoint_authorizations ).
-    li_client->request->set_method( if_http_request=>co_request_method_post ).
-
-    " Try to authenticate, if 2FA is required there will be a specific response header
-    li_client->authenticate( username = iv_username password = iv_password ).
-
-    li_client->send( EXCEPTIONS OTHERS = 1 ).
-    IF sy-subrc <> 0.
-      raise_comm_error_from_sy( ).
-    ENDIF.
-
-    li_client->receive( EXCEPTIONS OTHERS = 1 ).
-    IF sy-subrc <> 0.
-      raise_comm_error_from_sy( ).
-    ENDIF.
-
-    " The response will either be UNAUTHORIZED or MALFORMED which is both fine.
-
-    IF li_client->response->get_header_field( gc_otp_header_name ) CP 'required*'.
-      rv_required = abap_true.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD delete_access_tokens.
-    DATA: li_http_client           TYPE REF TO if_http_client,
-          lv_http_code             TYPE i,
-          lv_http_code_description TYPE string,
-          lt_tobedeleted_tokens    TYPE stringtab.
-    FIELD-SYMBOLS: <lv_id> TYPE string.
-
-    li_http_client = get_authenticated_client( iv_username  = iv_username
-                                               iv_password  = iv_password
-                                               iv_2fa_token = iv_2fa_token ).
-
-    set_list_token_request( li_http_client->request ).
-    li_http_client->send( EXCEPTIONS OTHERS = 1 ).
-    IF sy-subrc <> 0.
-      raise_comm_error_from_sy( ).
-    ENDIF.
-
-    li_http_client->receive( EXCEPTIONS OTHERS = 1 ).
-    IF sy-subrc <> 0.
-      raise_comm_error_from_sy( ).
-    ENDIF.
-
-    li_http_client->response->get_status(
-      IMPORTING
-        code   = lv_http_code
-        reason = lv_http_code_description ).
-    IF lv_http_code <> 200.
-      RAISE EXCEPTION TYPE lcx_2fa_token_del_failed
-        EXPORTING
-          iv_error_text = |Could not fetch current 2FA authorizations: | &&
-                          |{ lv_http_code } { lv_http_code_description }|.
-    ENDIF.
-
-    lt_tobedeleted_tokens = get_tobedel_tokens_from_resp( li_http_client->response ).
-    LOOP AT lt_tobedeleted_tokens ASSIGNING <lv_id> WHERE table_line IS NOT INITIAL.
-      set_del_token_request( ii_request  = li_http_client->request
-                             iv_token_id = <lv_id> ).
-      li_http_client->send( EXCEPTIONS OTHERS = 1 ).
-      IF sy-subrc <> 0.
-        raise_comm_error_from_sy( ).
-      ENDIF.
-
-      li_http_client->receive( EXCEPTIONS OTHERS = 1 ).
-      IF sy-subrc <> 0.
-        raise_comm_error_from_sy( ).
-      ENDIF.
-
-      li_http_client->response->get_status(
-        IMPORTING
-          code   = lv_http_code
-          reason = lv_http_code_description ).
-      IF lv_http_code <> 204.
-        RAISE EXCEPTION TYPE lcx_2fa_token_del_failed
-          EXPORTING
-            iv_error_text = |Could not delete token '{ <lv_id> }': | &&
-                            |{ lv_http_code } { lv_http_code_description }|.
-      ENDIF.
-    ENDLOOP.
-  ENDMETHOD.
-
-  METHOD get_authenticated_client.
-    DATA: lv_http_code             TYPE i,
-          lv_http_code_description TYPE string,
-          lo_settings              TYPE REF TO lcl_settings.
-
-    " If there is a cached client return it instead
-    IF is_session_running( ) = abap_true AND mi_authenticated_session IS BOUND.
-      ri_client = mi_authenticated_session.
-      RETURN.
-    ENDIF.
-
-    " Try to login to GitHub API with username, password and 2fa token
-
-    lo_settings = lcl_app=>settings( )->read( ).
-
-    cl_http_client=>create_by_url(
-      EXPORTING
-        url                = gc_github_api_url
-        ssl_id             = 'ANONYM'
-        proxy_host         = lo_settings->get_proxy_url( )
-        proxy_service      = lo_settings->get_proxy_port( )
-      IMPORTING
-        client             = ri_client
-      EXCEPTIONS
-        argument_not_found = 1
-        plugin_not_active  = 2
-        internal_error     = 3
-        OTHERS             = 4 ).
-    IF sy-subrc <> 0.
-      raise_comm_error_from_sy( ).
-    ENDIF.
-
-    " https://developer.github.com/v3/auth/#working-with-two-factor-authentication
-    ri_client->propertytype_accept_cookie = if_http_client=>co_enabled.
-    ri_client->request->set_header_field( name = gc_otp_header_name value = iv_2fa_token ).
-    ri_client->authenticate( username = iv_username password = iv_password ).
-    ri_client->propertytype_logon_popup = if_http_client=>co_disabled.
-
-    ri_client->send( EXCEPTIONS OTHERS = 1 ).
-    IF sy-subrc <> 0.
-      raise_comm_error_from_sy( ).
-    ENDIF.
-
-    ri_client->receive( EXCEPTIONS OTHERS = 1 ).
-    IF sy-subrc <> 0.
-      raise_comm_error_from_sy( ).
-    ENDIF.
-
-    " Check if authentication has succeeded
-    ri_client->response->get_status(
-      IMPORTING
-        code   = lv_http_code
-        reason = lv_http_code_description ).
-    IF lv_http_code <> 200.
-      RAISE EXCEPTION TYPE lcx_2fa_auth_failed
-        EXPORTING
-          iv_error_text = |Authentication failed: { lv_http_code_description }|.
-    ENDIF.
-
-    " Cache the authenticated http session / client to avoid unnecessary additional authentication
-    IF is_session_running( ) = abap_true.
-      mi_authenticated_session = ri_client.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD end.
-    super->end( ).
-    FREE mi_authenticated_session.
-  ENDMETHOD.
-ENDCLASS.
-
-"! Static registry class to find <em>LIF_2FA_AUTHENTICATOR</em> instances
-CLASS lcl_2fa_authenticator_registry DEFINITION
-  FINAL
-  CREATE PRIVATE.
-
-  PUBLIC SECTION.
-    CLASS-METHODS:
-      class_constructor,
-      "! Retrieve an authenticator instance by url
-      "! @parameter iv_url | Url of the repository / service
-      "! @parameter ro_authenticator | Found authenticator instance
-      "! @raising lcx_2fa_unsupported | No authenticator found that supports the service
-      get_authenticator_for_url IMPORTING iv_url                  TYPE string
-                                RETURNING VALUE(ro_authenticator) TYPE REF TO lif_2fa_authenticator
-                                RAISING   lcx_2fa_unsupported,
-      "! Check if there is a two factor authenticator available for the url
-      "! @parameter iv_url | Url of the repository / service
-      "! @parameter rv_supported | 2FA is supported
-      is_url_supported IMPORTING iv_url              TYPE string
-                       RETURNING VALUE(rv_supported) TYPE abap_bool,
-      "! Offer to use two factor authentication if supported and required
-      "! <p>
-      "! This uses GUI functionality to display a popup to request the user to enter a two factor
-      "! token. Also an dummy authentication request might be used to find out if two factor
-      "! authentication is required for the account.
-      "! </p>
-      "! @parameter iv_url | Url of the repository / service
-      "! @parameter cv_username | Username
-      "! @parameter cv_password | Password, will be replaced by an access token if two factor
-      "!                          authentication succeeds
-      "! @raising lcx_exception | Error in two factor authentication
-      use_2fa_if_required IMPORTING iv_url      TYPE string
-                          CHANGING  cv_username TYPE string
-                                    cv_password TYPE string
-                          RAISING   lcx_exception.
-    CLASS-DATA:
-      "! All authenticators managed by the registry
-      gt_registered_authenticators TYPE HASHED TABLE OF REF TO lif_2fa_authenticator
-                                        WITH UNIQUE KEY table_line READ-ONLY.
-  PROTECTED SECTION.
-  PRIVATE SECTION.
-ENDCLASS.
-
-CLASS lcl_2fa_authenticator_registry IMPLEMENTATION.
-  METHOD class_constructor.
-    DEFINE register.
-      CREATE OBJECT li_authenticator TYPE &1.
-      INSERT li_authenticator INTO TABLE gt_registered_authenticators.
-    END-OF-DEFINITION.
-
-    DATA: li_authenticator TYPE REF TO lif_2fa_authenticator.
-
-    " If there are new authenticators these need to be added here manually.
-    " I do not think there is an equivalent to SEO_INTERFACE_IMPLEM_GET_ALL for local classes
-    " without invoking the compiler directly.
-    register: lcl_2fa_github_authenticator.
-  ENDMETHOD.
-
-  METHOD get_authenticator_for_url.
-    FIELD-SYMBOLS: <lo_authenticator> LIKE LINE OF gt_registered_authenticators.
-
-    LOOP AT gt_registered_authenticators ASSIGNING <lo_authenticator>.
-      IF <lo_authenticator>->supports_url( iv_url ) = abap_true.
-        ro_authenticator = <lo_authenticator>.
-        RETURN.
-      ENDIF.
-    ENDLOOP.
-
-    RAISE EXCEPTION TYPE lcx_2fa_unsupported.
-  ENDMETHOD.
-
-  METHOD is_url_supported.
-    TRY.
-        get_authenticator_for_url( iv_url ).
-        rv_supported = abap_true.
-      CATCH lcx_2fa_unsupported ##NO_HANDLER.
-    ENDTRY.
-  ENDMETHOD.
-
-  METHOD use_2fa_if_required.
-    DATA: li_authenticator TYPE REF TO lif_2fa_authenticator,
-          lv_2fa_token     TYPE string,
-          lv_use_2fa       TYPE abap_bool,
-          lv_access_token  TYPE string,
-          lx_ex            TYPE REF TO cx_root.
-
-    IF is_url_supported( iv_url ) = abap_false.
-      RETURN.
-    ENDIF.
-
-    TRY.
-        li_authenticator = get_authenticator_for_url( iv_url ).
-        li_authenticator->begin( ).
-
-        " Is two factor authentication required for this account?
-        IF li_authenticator->is_2fa_required( iv_url      = iv_url
-                                              iv_username = cv_username
-                                              iv_password = cv_password ) = abap_true.
-
-          " Get a 2FA token (app/sms)
-          CALL FUNCTION 'POPUP_GET_STRING'
-            EXPORTING
-              label = 'Two factor auth. token'
-            IMPORTING
-              value = lv_2fa_token
-              okay  = lv_use_2fa.
-          IF lv_use_2fa = abap_false.
-            lcx_exception=>raise( 'Authentication cancelled' ).
-          ENDIF.
-
-          " Delete an old access token if it exists
-          li_authenticator->delete_access_tokens( iv_url       = iv_url
-                                                  iv_username  = cv_username
-                                                  iv_password  = cv_password
-                                                  iv_2fa_token = lv_2fa_token ).
-
-          " Get a new access token
-          lv_access_token = li_authenticator->authenticate( iv_url       = iv_url
-                                                            iv_username  = cv_username
-                                                            iv_password  = cv_password
-                                                            iv_2fa_token = lv_2fa_token ).
-
-          " Use the access token instead of the password
-          cv_password = lv_access_token.
-        ENDIF.
-
-        li_authenticator->end( ).
-
-      CATCH lcx_2fa_error INTO lx_ex.
-        TRY.
-            li_authenticator->end( ).
-          CATCH lcx_2fa_illegal_state ##NO_HANDLER.
-        ENDTRY.
-
-        RAISE EXCEPTION TYPE lcx_exception
-          EXPORTING
-            iv_text     = |2FA error: { lx_ex->get_text( ) }|
-            ix_previous = lx_ex.
-    ENDTRY.
-  ENDMETHOD.
 ENDCLASS.
 
 
@@ -8325,10 +7514,10 @@ CLASS lcl_http IMPLEMENTATION.
 
   METHOD acquire_login_details.
 
-    DATA: lv_default_user  TYPE string,
-          lv_user          TYPE string,
-          lv_pass          TYPE string,
-          lo_digest        TYPE REF TO lcl_http_digest.
+    DATA: lv_default_user TYPE string,
+          lv_user         TYPE string,
+          lv_pass         TYPE string,
+          lo_digest       TYPE REF TO lcl_http_digest.
 
 
     lv_default_user = lcl_app=>user( )->get_repo_username( iv_url ).
@@ -8336,10 +7525,10 @@ CLASS lcl_http IMPLEMENTATION.
 
     lcl_password_dialog=>popup(
       EXPORTING
-        iv_repo_url     = iv_url
+        iv_repo_url = iv_url
       CHANGING
-        cv_user         = lv_user
-        cv_pass         = lv_pass ).
+        cv_user     = lv_user
+        cv_pass     = lv_pass ).
 
     IF lv_user IS INITIAL.
       lcx_exception=>raise( 'HTTP 401, unauthorized' ).
@@ -8349,14 +7538,6 @@ CLASS lcl_http IMPLEMENTATION.
       lcl_app=>user( )->set_repo_username( iv_url      = iv_url
                                            iv_username = lv_user ).
     ENDIF.
-
-    " Offer two factor authentication if it is available and required
-    lcl_2fa_authenticator_registry=>use_2fa_if_required(
-      EXPORTING
-        iv_url      = iv_url
-      CHANGING
-        cv_username = lv_user
-        cv_password = lv_pass ).
 
     rv_scheme = ii_client->response->get_header_field( 'www-authenticate' ).
     FIND REGEX '^(\w+)' IN rv_scheme SUBMATCHES rv_scheme.
@@ -10435,7 +9616,8 @@ CLASS lcl_objects_files IMPLEMENTATION.
     ELSE.
       lv_obj_name = ms_item-obj_name.
     ENDIF.
-
+* handle namespaces
+    REPLACE ALL OCCURRENCES OF '/' IN lv_obj_name WITH '#'.
 
     IF iv_extra IS INITIAL.
       CONCATENATE lv_obj_name '.' ms_item-obj_type '.' iv_ext
@@ -10444,9 +9626,6 @@ CLASS lcl_objects_files IMPLEMENTATION.
       CONCATENATE lv_obj_name '.' ms_item-obj_type '.' iv_extra '.' iv_ext
         INTO rv_filename.                                   "#EC NOTEXT
     ENDIF.
-
-* handle namespaces
-    REPLACE ALL OCCURRENCES OF '/' IN rv_filename WITH '#'.
     TRANSLATE rv_filename TO LOWER CASE.
 
   ENDMETHOD.                    "filename
@@ -11086,28 +10265,12 @@ CLASS lcl_objects_program IMPLEMENTATION.
     ELSE.
 * function module RPY_PROGRAM_INSERT cannot handle function group includes
 
-      IF strlen( is_progdir-name ) > 30.
-        " special treatment for extenstions
-        " if the program name exceeds 30 characters it is not a usual
-        " ABAP program but might be some extension, which requires the internal
-        " addition EXTENSION TYPE, see
-        " http://help.sap.com/abapdocu_751/en/abapinsert_report_internal.htm#!ABAP_ADDITION_1@1@
-        " This e.g. occurs in case of transportable Code Inspector variants (ending with ===VC)
-        INSERT REPORT is_progdir-name
-         FROM it_source
-         STATE 'I'
-         EXTENSION TYPE is_progdir-name+30.
-        IF sy-subrc <> 0.
-          lcx_exception=>raise( 'error from INSERT REPORT .. EXTENSION TYPE' ).
-        ENDIF.
-      ELSE.
-        INSERT REPORT is_progdir-name
-          FROM it_source
-          STATE 'I'
-          PROGRAM TYPE is_progdir-subc.
-        IF sy-subrc <> 0.
-          lcx_exception=>raise( 'error from INSERT REPORT' ).
-        ENDIF.
+      INSERT REPORT is_progdir-name
+        FROM it_source
+        STATE 'I'
+        PROGRAM TYPE is_progdir-subc.
+      IF sy-subrc <> 0.
+        lcx_exception=>raise( 'error from INSERT REPORT' ).
       ENDIF.
 
       IF NOT it_tpool[] IS INITIAL.
@@ -12134,8 +11297,6 @@ CLASS lcl_file_status IMPLEMENTATION.
 
     " Handle namespaces
     REPLACE ALL OCCURRENCES OF '#' IN lv_name WITH '/'.
-    REPLACE ALL OCCURRENCES OF '#' IN lv_type WITH '/'.
-    REPLACE ALL OCCURRENCES OF '#' IN lv_ext WITH '/'.
 
     CLEAR es_item.
     es_item-obj_type = lv_type.
@@ -12566,10 +11727,9 @@ CLASS lcl_popups IMPLEMENTATION.
 
     DATA: lo_branches    TYPE REF TO lcl_git_branch_list,
           lt_branches    TYPE lcl_git_branch_list=>ty_git_branch_list_tt,
-          lv_answer      TYPE c LENGTH 1,
-          lv_default     TYPE i,
           lv_head_suffix TYPE string,
-          lv_head_symref TYPE string,
+          lv_answer      TYPE c LENGTH 1,
+          lv_default     TYPE i VALUE 1, "Default cursor position
           lt_selection   TYPE TABLE OF spopli.
 
     FIELD-SYMBOLS: <ls_sel>    LIKE LINE OF lt_selection,
@@ -12579,41 +11739,26 @@ CLASS lcl_popups IMPLEMENTATION.
     lo_branches    = lcl_git_transport=>branches( iv_url ).
     lt_branches    = lo_branches->get_branches_only( ).
     lv_head_suffix = | ({ lcl_git_branch_list=>c_head_name })|.
-    lv_head_symref = lo_branches->get_head_symref( ).
 
     LOOP AT lt_branches ASSIGNING <ls_branch>.
 
-      CHECK <ls_branch>-name IS NOT INITIAL. " To ensure some below ifs
-
-      IF <ls_branch>-is_head = abap_true.
-
-        IF <ls_branch>-name = lcl_git_branch_list=>c_head_name. " HEAD
-          IF <ls_branch>-name <> lv_head_symref AND lv_head_symref IS NOT INITIAL.
-            " HEAD but other HEAD symref exists - ignore
-            CONTINUE.
-          ELSE.
-            INSERT INITIAL LINE INTO lt_selection INDEX 1 ASSIGNING <ls_sel>.
-            <ls_sel>-varoption = <ls_branch>-name.
-          ENDIF.
-        ELSE.
-          INSERT INITIAL LINE INTO lt_selection INDEX 1 ASSIGNING <ls_sel>.
-          <ls_sel>-varoption = <ls_branch>-display_name && lv_head_suffix.
-        ENDIF.
-
-        IF lv_default > 0. " Shift down default if set
-          lv_default = lv_default + 1.
-        ENDIF.
-      ELSE.
-        APPEND INITIAL LINE TO lt_selection ASSIGNING <ls_sel>.
-        <ls_sel>-varoption = <ls_branch>-display_name.
+      IF <ls_branch>-name = lcl_git_branch_list=>c_head_name
+         AND <ls_branch>-name <> lo_branches->get_head_symref( ).
+        " HEAD but other HEAD symref exist
+        CONTINUE.
       ENDIF.
 
-      IF <ls_branch>-name = iv_default_branch.
-        IF <ls_branch>-is_head = abap_true.
-          lv_default = 1.
-        ELSE.
-          lv_default = sy-tabix.
-        ENDIF.
+      APPEND INITIAL LINE TO lt_selection ASSIGNING <ls_sel>.
+      IF iv_default_branch IS NOT INITIAL AND iv_default_branch = <ls_branch>-name.
+        lv_default = sy-tabix.
+      ENDIF.
+
+      IF <ls_branch>-name = lo_branches->get_head_symref( )
+         AND <ls_branch>-name <> lcl_git_branch_list=>c_head_name.
+        " HEAD symref but not HEAD itself
+        <ls_sel>-varoption = <ls_branch>-display_name && lv_head_suffix.
+      ELSE.
+        <ls_sel>-varoption = <ls_branch>-display_name.
       ENDIF.
 
     ENDLOOP.
@@ -12658,6 +11803,7 @@ CLASS lcl_popups IMPLEMENTATION.
       ASSERT sy-subrc = 0.
       rs_branch = lo_branches->find_by_name( <ls_branch>-name ).
     ENDIF.
+
 
   ENDMETHOD.
 
@@ -14405,11 +13551,18 @@ ENDCLASS.                    "lcl_object_auth IMPLEMENTATION
 
 
 ****************************************************
-* abapmerge - ZABAPGIT_OBJECT_OO_FUNCTIONS
+* abapmerge - ZABAPGIT_OBJECT_CLAS
 ****************************************************
-"This interface contains SAP object oriented functions that can't be put under test
-"(i.e. creating a Class in the system)
-INTERFACE lif_object_oriented_object_fnc.
+*&---------------------------------------------------------------------*
+*&  Include           ZABAPGIT_OBJECT_CLAS
+*&---------------------------------------------------------------------*
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_object_clas DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+INTERFACE lif_object_oriented_object.
   TYPES: BEGIN OF ty_includes,
            programm TYPE programm,
          END OF ty_includes,
@@ -14474,139 +13627,52 @@ INTERFACE lif_object_oriented_object_fnc.
       IMPORTING
         iv_object_name     TYPE sobj_name
       RETURNING
-        VALUE(rt_includes) TYPE ty_includes_tt,
-    exists
-      IMPORTING
-        iv_object_name   TYPE seoclskey
-      RETURNING
-        VALUE(rv_exists) TYPE abap_bool,
-    serialize_abap
-      IMPORTING
-        is_class_key     TYPE seoclskey
-        iv_type          TYPE seop_include_ext_app OPTIONAL
-      RETURNING
-        VALUE(rt_source) TYPE ty_string_tt
-      RAISING
-        lcx_exception
-        cx_sy_dyn_call_error,
-    get_skip_test_classes
-      RETURNING
-        VALUE(rv_skip) TYPE abap_bool,
-    get_class_properties
-      IMPORTING
-        is_class_key               TYPE seoclskey
-      RETURNING
-        VALUE(rs_class_properties) TYPE vseoclass
-      RAISING
-        lcx_exception,
-    get_interface_properties
-      IMPORTING
-        is_interface_key               TYPE seoclskey
-      RETURNING
-        VALUE(rs_interface_properties) TYPE vseointerf
-      RAISING
-        lcx_exception,
-    read_text_pool
-      IMPORTING
-        iv_class_name       TYPE seoclsname
-        iv_language         TYPE spras
-      RETURNING
-        VALUE(rt_text_pool) TYPE textpool_table,
-    read_documentation
-      IMPORTING
-        iv_class_name   TYPE seoclsname
-        iv_language     TYPE spras
-      RETURNING
-        VALUE(rt_lines) TYPE tlinetab,
-    read_sotr
-      IMPORTING
-        iv_object_name TYPE sobj_name
-      RETURNING
-        VALUE(rt_sotr) TYPE ty_sotr_tt
-      RAISING
-        lcx_exception,
-    read_descriptions
-      IMPORTING
-        iv_obejct_name         TYPE seoclsname
-      RETURNING
-        VALUE(rt_descriptions) TYPE ty_seocompotx_tt,
-    delete
-      IMPORTING
-        is_deletion_key TYPE seoclskey
-      RAISING
-        lcx_exception.
+        VALUE(rt_includes) TYPE ty_includes_tt.
 ENDINTERFACE.
 
-CLASS lcl_oo_object_serializer DEFINITION.
+CLASS lcl_object_oriented_base DEFINITION ABSTRACT.
   PUBLIC SECTION.
-
-    METHODS:
-      serialize_abap_clif_source
-        IMPORTING
-          is_class_key     TYPE seoclskey
-          iv_type          TYPE seop_include_ext_app OPTIONAL
-        RETURNING
-          VALUE(rt_source) TYPE ty_string_tt
-        RAISING
-          lcx_exception
-          cx_sy_dyn_call_error,
-      are_test_classes_skipped
-        RETURNING
-          VALUE(rv_return) TYPE abap_bool.
-    METHODS serialize_locals_imp
-      IMPORTING is_clskey        TYPE seoclskey
-      RETURNING VALUE(rt_source) TYPE ty_string_tt
-      RAISING   lcx_exception.
-
-    METHODS serialize_locals_def
-      IMPORTING is_clskey        TYPE seoclskey
-      RETURNING VALUE(rt_source) TYPE ty_string_tt
-      RAISING   lcx_exception.
-    METHODS serialize_testclasses
-      IMPORTING
-                is_clskey        TYPE seoclskey
-      RETURNING VALUE(rt_source) TYPE ty_string_tt
-      RAISING   lcx_exception.
-
-    METHODS serialize_macros
-      IMPORTING is_clskey        TYPE seoclskey
-      RETURNING VALUE(rt_source) TYPE ty_string_tt
-      RAISING   lcx_exception.
+    INTERFACES: lif_object_oriented_object.
   PRIVATE SECTION.
-    DATA mv_skip_testclass TYPE abap_bool.
-    METHODS serialize_abap_old
-      IMPORTING is_clskey        TYPE seoclskey
-      RETURNING VALUE(rt_source) TYPE ty_string_tt
+    METHODS deserialize_abap_source_old
+      IMPORTING is_clskey TYPE seoclskey
+                it_source TYPE ty_string_tt
       RAISING   lcx_exception.
 
-    METHODS serialize_abap_new
-      IMPORTING is_clskey        TYPE seoclskey
-      RETURNING VALUE(rt_source) TYPE ty_string_tt
+    METHODS deserialize_abap_source_new
+      IMPORTING is_clskey TYPE seoclskey
+                it_source TYPE ty_string_tt
       RAISING   lcx_exception
                 cx_sy_dyn_call_error.
-    METHODS remove_signatures
-      CHANGING ct_source TYPE ty_string_tt.
-
-    METHODS read_include
-      IMPORTING is_clskey        TYPE seoclskey
-                iv_type          TYPE seop_include_ext_app
-      RETURNING VALUE(rt_source) TYPE seop_source_string.
-
-
-    METHODS reduce
-      CHANGING ct_source TYPE ty_string_tt.
 ENDCLASS.
 
-CLASS lcl_oo_object_serializer IMPLEMENTATION.
-  METHOD serialize_abap_clif_source.
+CLASS lcl_object_oriented_base IMPLEMENTATION.
+
+  METHOD lif_object_oriented_object~create.
+    "Subclass responsibility
+    ASSERT 0 = 1.
+  ENDMETHOD.
+
+  METHOD lif_object_oriented_object~deserialize_source.
     TRY.
-        rt_source = serialize_abap_new( is_class_key ).
+        deserialize_abap_source_new(
+          is_clskey = is_key
+          it_source = it_source ).
       CATCH cx_sy_dyn_call_error.
-        rt_source = serialize_abap_old( is_class_key ).
+        deserialize_abap_source_old(
+          is_clskey = is_key
+          it_source = it_source ).
     ENDTRY.
   ENDMETHOD.
-  METHOD serialize_abap_old.
-* for old ABAP AS versions
+
+  METHOD lif_object_oriented_object~generate_locals.
+    "Subclass responsibility
+    ASSERT 0 = 1.
+  ENDMETHOD.
+
+  METHOD deserialize_abap_source_old.
+    "for backwards compatability down to 702
+
     DATA: lo_source TYPE REF TO cl_oo_source.
 
     CREATE OBJECT lo_source
@@ -14619,69 +13685,548 @@ CLASS lcl_oo_object_serializer IMPLEMENTATION.
       lcx_exception=>raise( 'error from CL_OO_SOURCE' ).
     ENDIF.
 
-    lo_source->read( 'A' ).
-    rt_source = lo_source->get_old_source( ).
-    remove_signatures( CHANGING ct_source = rt_source ).
-
-  ENDMETHOD.                    "serialize_abap
-
-  METHOD serialize_abap_new.
-
-    DATA: lo_source   TYPE REF TO object,
-          lo_instance TYPE REF TO object.
-
-* do not call the class/methods statically, as it will
-* give syntax errors on old versions
-    CALL METHOD ('CL_OO_FACTORY')=>('CREATE_INSTANCE')
-      RECEIVING
-        result = lo_instance.
-
-    CALL METHOD lo_instance->('CREATE_CLIF_SOURCE')
-      EXPORTING
-        clif_name = is_clskey-clsname
-        version   = 'A'
-      RECEIVING
-        result    = lo_source.
-
-    CALL METHOD lo_source->('GET_SOURCE')
-      IMPORTING
-        source = rt_source.
+    TRY.
+        lo_source->access_permission( seok_access_modify ).
+        lo_source->set_source( it_source ).
+        lo_source->save( ).
+        lo_source->access_permission( seok_access_free ).
+      CATCH cx_oo_access_permission.
+        lcx_exception=>raise( 'permission error' ).
+      CATCH cx_oo_source_save_failure.
+        lcx_exception=>raise( 'save failure' ).
+    ENDTRY.
 
   ENDMETHOD.
 
-  METHOD remove_signatures.
+  METHOD deserialize_abap_source_new.
+    DATA: lo_factory TYPE REF TO object,
+          lo_source  TYPE REF TO object.
 
-* signatures messes up in CL_OO_SOURCE when deserializing and serializing
-* within same session
+    CALL METHOD ('CL_OO_FACTORY')=>('CREATE_INSTANCE')
+      RECEIVING
+        result = lo_factory.
 
-    DATA: lv_begin  TYPE string,
-          lv_end    TYPE string,
-          lv_remove TYPE sap_bool,
-          lv_source LIKE LINE OF ct_source.
+    CALL METHOD lo_factory->('CREATE_CLIF_SOURCE')
+      EXPORTING
+        clif_name = is_clskey-clsname
+      RECEIVING
+        result    = lo_source.
 
-    "@TODO: Put under test
-    CONCATENATE '* <SIGNATURE>------------------------------------'
-      '---------------------------------------------------+'
-      INTO lv_begin.
+    TRY.
+        CALL METHOD lo_source->('IF_OO_CLIF_SOURCE~LOCK').
+      CATCH cx_oo_access_permission.
+        lcx_exception=>raise( 'source_new, access permission exception' ).
+    ENDTRY.
 
-    CONCATENATE '* +------------------------------------------------'
-      '--------------------------------------</SIGNATURE>'
-      INTO lv_end.
+    CALL METHOD lo_source->('IF_OO_CLIF_SOURCE~SET_SOURCE')
+      EXPORTING
+        source = it_source.
 
-    lv_remove = abap_false.
-    LOOP AT ct_source INTO lv_source.
-      IF lv_source = lv_begin.
-        lv_remove = abap_true.
+    CALL METHOD lo_source->('IF_OO_CLIF_SOURCE~SAVE').
+
+    CALL METHOD lo_source->('IF_OO_CLIF_SOURCE~UNLOCK').
+
+  ENDMETHOD.
+  METHOD lif_object_oriented_object~add_to_activation_list.
+    lcl_objects_activation=>add_item( is_item ).
+  ENDMETHOD.
+
+  METHOD lif_object_oriented_object~update_descriptions.
+    DELETE FROM seocompotx WHERE clsname = is_key-clsname.
+    INSERT seocompotx FROM TABLE it_descriptions.
+  ENDMETHOD.
+  METHOD lif_object_oriented_object~insert_text_pool.
+    "Subclass responsibility
+    ASSERT 0 = 1.
+  ENDMETHOD.
+
+  METHOD lif_object_oriented_object~create_sotr.
+    "Subclass responsibility
+    ASSERT 0 = 1.
+  ENDMETHOD.
+
+  METHOD lif_object_oriented_object~create_documentation.
+    CALL FUNCTION 'DOCU_UPD'
+      EXPORTING
+        id       = 'CL'
+        langu    = iv_language
+        object   = iv_object_name
+      TABLES
+        line     = it_lines
+      EXCEPTIONS
+        ret_code = 1
+        OTHERS   = 2.
+    IF sy-subrc <> 0.
+      lcx_exception=>raise( 'error from DOCU_UPD' ).
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD lif_object_oriented_object~get_includes.
+    "Subclass responsibility
+    ASSERT 0 = 1.
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+CLASS lcl_object_oriented_class DEFINITION
+  INHERITING FROM lcl_object_oriented_base.
+  PUBLIC SECTION.
+    METHODS:
+      lif_object_oriented_object~create REDEFINITION,
+      lif_object_oriented_object~generate_locals REDEFINITION,
+      lif_object_oriented_object~insert_text_pool REDEFINITION,
+      lif_object_oriented_object~create_sotr REDEFINITION,
+      lif_object_oriented_object~get_includes REDEFINITION.
+
+ENDCLASS.
+CLASS lcl_object_oriented_class IMPLEMENTATION.
+  METHOD lif_object_oriented_object~create.
+    CALL FUNCTION 'SEO_CLASS_CREATE_COMPLETE'
+      EXPORTING
+        devclass        = iv_package
+        overwrite       = iv_overwrite
+      CHANGING
+        class           = is_properties
+      EXCEPTIONS
+        existing        = 1
+        is_interface    = 2
+        db_error        = 3
+        component_error = 4
+        no_access       = 5
+        other           = 6
+        OTHERS          = 7.
+    IF sy-subrc <> 0.
+      lcx_exception=>raise( 'error from SEO_CLASS_CREATE_COMPLETE' ).
+    ENDIF.
+  ENDMETHOD.
+  METHOD lif_object_oriented_object~generate_locals.
+    CALL FUNCTION 'SEO_CLASS_GENERATE_LOCALS'
+      EXPORTING
+        clskey                 = is_key
+        force                  = iv_force
+        locals_def             = it_local_definitions
+        locals_imp             = it_local_implementations
+        locals_mac             = it_local_macros
+        locals_testclasses     = it_local_test_classes
+      EXCEPTIONS
+        not_existing           = 1
+        model_only             = 2
+        locals_not_generated   = 3
+        locals_not_initialised = 4
+        OTHERS                 = 5.
+    IF sy-subrc <> 0.
+      lcx_exception=>raise( 'error from generate_locals' ).
+    ENDIF.
+  ENDMETHOD.
+  METHOD lif_object_oriented_object~insert_text_pool.
+    DATA: lv_cp        TYPE program.
+
+    lv_cp = cl_oo_classname_service=>get_classpool_name( iv_class_name ).
+
+    INSERT TEXTPOOL lv_cp
+      FROM it_text_pool
+      LANGUAGE iv_language
+      STATE 'I'.
+    IF sy-subrc <> 0.
+      lcx_exception=>raise( 'error from INSERT TEXTPOOL' ).
+    ENDIF.
+
+    lcl_objects_activation=>add( iv_type = 'REPT'
+                                 iv_name = lv_cp ).
+  ENDMETHOD.
+
+  METHOD lif_object_oriented_object~create_sotr.
+    DATA: lt_sotr    TYPE ty_sotr_tt,
+          lt_objects TYPE sotr_objects,
+          ls_paket   TYPE sotr_pack,
+          lv_object  LIKE LINE OF lt_objects.
+
+    FIELD-SYMBOLS: <ls_sotr> LIKE LINE OF lt_sotr.
+
+    LOOP AT it_sotr ASSIGNING <ls_sotr>.
+      CALL FUNCTION 'SOTR_OBJECT_GET_OBJECTS'
+        EXPORTING
+          object_vector    = <ls_sotr>-header-objid_vec
+        IMPORTING
+          objects          = lt_objects
+        EXCEPTIONS
+          object_not_found = 1
+          OTHERS           = 2.
+      IF sy-subrc <> 0.
+        lcx_exception=>raise( 'error from SOTR_OBJECT_GET_OBJECTS' ).
       ENDIF.
-      IF lv_remove = abap_true.
-        DELETE ct_source INDEX sy-tabix.
-      ENDIF.
-      IF lv_source = lv_end.
-        lv_remove = abap_false.
+
+      READ TABLE lt_objects INDEX 1 INTO lv_object.
+      ASSERT sy-subrc = 0.
+
+      ls_paket-paket = iv_package.
+
+      CALL FUNCTION 'SOTR_CREATE_CONCEPT'
+        EXPORTING
+          paket                         = ls_paket
+          crea_lan                      = <ls_sotr>-header-crea_lan
+          alias_name                    = <ls_sotr>-header-alias_name
+          object                        = lv_object
+          entries                       = <ls_sotr>-entries
+          concept_default               = <ls_sotr>-header-concept
+        EXCEPTIONS
+          package_missing               = 1
+          crea_lan_missing              = 2
+          object_missing                = 3
+          paket_does_not_exist          = 4
+          alias_already_exist           = 5
+          object_type_not_found         = 6
+          langu_missing                 = 7
+          identical_context_not_allowed = 8
+          text_too_long                 = 9
+          error_in_update               = 10
+          no_master_langu               = 11
+          error_in_concept_id           = 12
+          alias_not_allowed             = 13
+          tadir_entry_creation_failed   = 14
+          internal_error                = 15
+          error_in_correction           = 16
+          user_cancelled                = 17
+          no_entry_found                = 18
+          OTHERS                        = 19.
+      IF sy-subrc <> 0.
+        lcx_exception=>raise( 'error from SOTR_CREATE_CONCEPT' ).
       ENDIF.
     ENDLOOP.
+  ENDMETHOD.
 
-  ENDMETHOD.                    "remove_signatures
+  METHOD lif_object_oriented_object~get_includes.
+* note: includes returned might not exist
+* method cl_oo_classname_service=>GET_ALL_CLASS_INCLUDES does not exist in 702
+
+    DATA: lv_class_name TYPE seoclsname,
+          lt_methods    TYPE seop_methods_w_include.
+
+    FIELD-SYMBOLS: <ls_method> LIKE LINE OF lt_methods.
+
+    lv_class_name = iv_object_name.
+
+    APPEND cl_oo_classname_service=>get_ccdef_name( lv_class_name ) TO rt_includes.
+    APPEND cl_oo_classname_service=>get_ccmac_name( lv_class_name ) TO rt_includes.
+    APPEND cl_oo_classname_service=>get_ccimp_name( lv_class_name ) TO rt_includes.
+    APPEND cl_oo_classname_service=>get_cl_name( lv_class_name ) TO rt_includes.
+    APPEND cl_oo_classname_service=>get_ccau_name( lv_class_name ) TO rt_includes.
+    APPEND cl_oo_classname_service=>get_pubsec_name( lv_class_name ) TO rt_includes.
+    APPEND cl_oo_classname_service=>get_prosec_name( lv_class_name ) TO rt_includes.
+    APPEND cl_oo_classname_service=>get_prisec_name( lv_class_name ) TO rt_includes.
+    APPEND cl_oo_classname_service=>get_classpool_name( lv_class_name ) TO rt_includes.
+    APPEND cl_oo_classname_service=>get_ct_name( lv_class_name ) TO rt_includes.
+    APPEND cl_oo_classname_service=>get_cs_name( lv_class_name ) TO rt_includes.
+
+    lt_methods = cl_oo_classname_service=>get_all_method_includes( lv_class_name ).
+    LOOP AT lt_methods ASSIGNING <ls_method>.
+      APPEND <ls_method>-incname TO rt_includes.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_object_oriented_interface DEFINITION
+  INHERITING FROM lcl_object_oriented_base.
+  PUBLIC SECTION.
+    METHODS:
+      lif_object_oriented_object~create REDEFINITION,
+      lif_object_oriented_object~get_includes REDEFINITION.
+ENDCLASS.
+
+CLASS lcl_object_oriented_interface IMPLEMENTATION.
+  METHOD lif_object_oriented_object~create.
+    CALL FUNCTION 'SEO_INTERFACE_CREATE_COMPLETE'
+      EXPORTING
+        devclass        = iv_package
+        overwrite       = iv_overwrite
+      CHANGING
+        interface       = is_properties
+      EXCEPTIONS
+        existing        = 1
+        is_class        = 2
+        db_error        = 3
+        component_error = 4
+        no_access       = 5
+        other           = 6
+        OTHERS          = 7.
+    IF sy-subrc <> 0.
+      lcx_exception=>raise( 'Error from SEO_INTERFACE_CREATE_COMPLETE' ).
+    ENDIF.
+  ENDMETHOD.
+  METHOD lif_object_oriented_object~get_includes.
+    DATA lv_interface_name TYPE seoclsname.
+    lv_interface_name = iv_object_name.
+    APPEND cl_oo_classname_service=>get_interfacepool_name( lv_interface_name ) TO rt_includes.
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lth_oo_factory_injector DEFINITION DEFERRED.
+
+CLASS lcl_object_oriented_factory DEFINITION
+  FRIENDS lth_oo_factory_injector.
+  PUBLIC SECTION.
+    CLASS-METHODS:
+      make
+        IMPORTING
+          iv_object_type                   TYPE tadir-object
+        RETURNING
+          VALUE(ro_object_oriented_object) TYPE REF TO lif_object_oriented_object.
+  PRIVATE SECTION.
+    CLASS-DATA:
+        go_object_oriented_object TYPE REF TO lif_object_oriented_object.
+ENDCLASS.
+CLASS lcl_object_oriented_factory IMPLEMENTATION.
+  METHOD make.
+    IF go_object_oriented_object IS BOUND.
+      ro_object_oriented_object = go_object_oriented_object.
+      RETURN.
+    ENDIF.
+    IF iv_object_type = 'CLAS'.
+      CREATE OBJECT ro_object_oriented_object TYPE lcl_object_oriented_class.
+    ELSEIF iv_object_type = 'INTF'.
+      CREATE OBJECT ro_object_oriented_object TYPE lcl_object_oriented_interface.
+    ENDIF.
+  ENDMETHOD.
+ENDCLASS.
+
+CLASS lth_oo_factory_injector DEFINITION FOR TESTING.
+  PUBLIC SECTION.
+    CLASS-METHODS:
+      inject
+        IMPORTING
+          io_object_oriented_object TYPE REF TO lif_object_oriented_object.
+ENDCLASS.
+CLASS lth_oo_factory_injector IMPLEMENTATION.
+  METHOD inject.
+    lcl_object_oriented_factory=>go_object_oriented_object = io_object_oriented_object.
+  ENDMETHOD.
+ENDCLASS.
+
+CLASS lcl_object_clas DEFINITION INHERITING FROM lcl_objects_program.
+
+  PUBLIC SECTION.
+    INTERFACES lif_object.
+    ALIASES mo_files FOR lif_object~mo_files.
+    METHODS constructor
+      IMPORTING
+        is_item     TYPE ty_item
+        iv_language TYPE spras.
+
+  PROTECTED SECTION.
+    METHODS deserialize_abap
+      IMPORTING io_xml     TYPE REF TO lcl_xml_input
+                iv_package TYPE devclass
+      RAISING   lcx_exception.
+
+    METHODS deserialize_docu
+      IMPORTING io_xml TYPE REF TO lcl_xml_input
+      RAISING   lcx_exception.
+    DATA mo_object_oriented_object TYPE REF TO lif_object_oriented_object.
+  PRIVATE SECTION.
+    DATA mv_skip_testclass TYPE abap_bool.
+
+    METHODS deserialize_tpool
+      IMPORTING io_xml TYPE REF TO lcl_xml_input
+      RAISING   lcx_exception.
+
+    METHODS deserialize_sotr
+      IMPORTING io_xml     TYPE REF TO lcl_xml_input
+                iv_package TYPE devclass
+      RAISING   lcx_exception.
+
+    METHODS serialize_abap_old
+      IMPORTING is_clskey        TYPE seoclskey
+      RETURNING VALUE(rt_source) TYPE ty_string_tt
+      RAISING   lcx_exception.
+
+    METHODS serialize_abap_new
+      IMPORTING is_clskey        TYPE seoclskey
+      RETURNING VALUE(rt_source) TYPE ty_string_tt
+      RAISING   lcx_exception
+                cx_sy_dyn_call_error.
+
+    METHODS serialize_locals_imp
+      IMPORTING is_clskey        TYPE seoclskey
+      RETURNING VALUE(rt_source) TYPE ty_string_tt
+      RAISING   lcx_exception.
+
+    METHODS serialize_locals_def
+      IMPORTING is_clskey        TYPE seoclskey
+      RETURNING VALUE(rt_source) TYPE ty_string_tt
+      RAISING   lcx_exception.
+
+    METHODS read_include
+      IMPORTING is_clskey        TYPE seoclskey
+                iv_type          TYPE seop_include_ext_app
+      RETURNING VALUE(rt_source) TYPE seop_source_string.
+
+    METHODS serialize_testclasses
+      IMPORTING is_clskey        TYPE seoclskey
+      RETURNING VALUE(rt_source) TYPE ty_string_tt
+      RAISING   lcx_exception.
+
+    METHODS serialize_macros
+      IMPORTING is_clskey        TYPE seoclskey
+      RETURNING VALUE(rt_source) TYPE ty_string_tt
+      RAISING   lcx_exception.
+
+    METHODS serialize_xml
+      IMPORTING io_xml TYPE REF TO lcl_xml_output
+      RAISING   lcx_exception.
+
+    METHODS read_sotr
+      RETURNING VALUE(rt_sotr) TYPE ty_sotr_tt
+      RAISING   lcx_exception.
+
+    METHODS remove_signatures
+      CHANGING ct_source TYPE ty_string_tt.
+
+    METHODS reduce
+      CHANGING ct_source TYPE ty_string_tt.
+ENDCLASS.                    "lcl_object_dtel DEFINITION
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_object_clas IMPLEMENTATION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_object_clas IMPLEMENTATION.
+
+  METHOD lif_object~has_changed_since.
+    DATA:
+      lt_includes TYPE seoincl_t.
+
+    FIELD-SYMBOLS <incl> LIKE LINE OF lt_includes.
+
+    lt_includes = mo_object_oriented_object->get_includes( ms_item-obj_name ).
+    LOOP AT lt_includes ASSIGNING <incl>.
+      rv_changed = check_prog_changed_since(
+        iv_program   = <incl>
+        iv_timestamp = iv_timestamp
+        iv_skip_gui  = abap_true ).
+      IF rv_changed = abap_true.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.  "lif_object~has_changed_since
+
+  METHOD lif_object~get_metadata.
+    rs_metadata = get_metadata( ).
+  ENDMETHOD.                    "lif_object~get_metadata
+
+  METHOD lif_object~changed_by.
+
+    TYPES: BEGIN OF ty_includes,
+             programm TYPE programm,
+           END OF ty_includes.
+
+    TYPES: BEGIN OF ty_reposrc,
+             unam  TYPE reposrc-unam,
+             udat  TYPE reposrc-udat,
+             utime TYPE reposrc-utime,
+           END OF ty_reposrc.
+
+    DATA: lt_reposrc  TYPE STANDARD TABLE OF ty_reposrc,
+          ls_reposrc  LIKE LINE OF lt_reposrc,
+          lt_includes TYPE STANDARD TABLE OF ty_includes.
+
+    lt_includes = mo_object_oriented_object->get_includes( ms_item-obj_name ).
+    ASSERT lines( lt_includes ) > 0.
+
+    SELECT unam udat utime FROM reposrc
+      INTO TABLE lt_reposrc
+      FOR ALL ENTRIES IN lt_includes
+      WHERE progname = lt_includes-programm
+      AND   r3state = 'A'.
+    IF sy-subrc <> 0.
+      rv_user = c_user_unknown.
+    ELSE.
+      SORT lt_reposrc BY udat DESCENDING utime DESCENDING.
+      READ TABLE lt_reposrc INDEX 1 INTO ls_reposrc.
+      ASSERT sy-subrc = 0.
+      rv_user = ls_reposrc-unam.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD lif_object~exists.
+
+    DATA: ls_clskey TYPE seoclskey.
+
+
+    ls_clskey-clsname = ms_item-obj_name.
+
+    CALL FUNCTION 'SEO_CLASS_EXISTENCE_CHECK'
+      EXPORTING
+        clskey        = ls_clskey
+      EXCEPTIONS
+        not_specified = 1
+        not_existing  = 2
+        is_interface  = 3
+        no_text       = 4
+        inconsistent  = 5
+        OTHERS        = 6.
+    rv_bool = boolc( sy-subrc <> 2 ).
+
+  ENDMETHOD.                    "lif_object~exists
+
+  METHOD lif_object~jump.
+
+    CALL FUNCTION 'RS_TOOL_ACCESS'
+      EXPORTING
+        operation     = 'SHOW'
+        object_name   = ms_item-obj_name
+        object_type   = 'CLAS'
+        in_new_window = abap_true.
+
+  ENDMETHOD.                    "jump
+
+  METHOD lif_object~delete.
+
+    DATA: ls_clskey TYPE seoclskey.
+
+
+    ls_clskey-clsname = ms_item-obj_name.
+
+    CASE ms_item-obj_type.
+      WHEN 'CLAS'.
+        CALL FUNCTION 'SEO_CLASS_DELETE_COMPLETE'
+          EXPORTING
+            clskey       = ls_clskey
+          EXCEPTIONS
+            not_existing = 1
+            is_interface = 2
+            db_error     = 3
+            no_access    = 4
+            other        = 5
+            OTHERS       = 6.
+        IF sy-subrc <> 0.
+          lcx_exception=>raise( 'Error from SEO_CLASS_DELETE_COMPLETE' ).
+        ENDIF.
+      WHEN 'INTF'.
+        CALL FUNCTION 'SEO_INTERFACE_DELETE_COMPLETE'
+          EXPORTING
+            intkey       = ls_clskey
+          EXCEPTIONS
+            not_existing = 1
+            is_class     = 2
+            db_error     = 3
+            no_access    = 4
+            other        = 5
+            OTHERS       = 6.
+        IF sy-subrc <> 0.
+          lcx_exception=>raise( 'Error from SEO_INTERFACE_DELETE_COMPLETE' ).
+        ENDIF.
+      WHEN OTHERS.
+        lcx_exception=>raise( 'class delete, unknown type' ).
+    ENDCASE.
+
+  ENDMETHOD.                    "delete
+
   METHOD reduce.
 
     DATA: lv_source LIKE LINE OF ct_source,
@@ -14755,7 +14300,6 @@ CLASS lcl_oo_object_serializer IMPLEMENTATION.
 * creating an extra file in the repository.
 * Also remove it if the content is manually removed, but
 * the class still thinks it contains tests
-    "@TODO: Put under test
     mv_skip_testclass = abap_false.
     IF lines( rt_source ) = 2.
       READ TABLE rt_source INDEX 1 INTO lv_line1.
@@ -14787,55 +14331,11 @@ CLASS lcl_oo_object_serializer IMPLEMENTATION.
     reduce( CHANGING ct_source = rt_source ).
 
   ENDMETHOD.                    "serialize_macro
-  METHOD are_test_classes_skipped.
-    rv_return = mv_skip_testclass.
-  ENDMETHOD.
 
-ENDCLASS.
-
-CLASS lcl_object_oriented_base DEFINITION ABSTRACT.
-  PUBLIC SECTION.
-    INTERFACES: lif_object_oriented_object_fnc.
-  PRIVATE SECTION.
-    DATA mv_skip_test_classes TYPE abap_bool.
-    METHODS deserialize_abap_source_old
-      IMPORTING is_clskey TYPE seoclskey
-                it_source TYPE ty_string_tt
-      RAISING   lcx_exception.
-
-    METHODS deserialize_abap_source_new
-      IMPORTING is_clskey TYPE seoclskey
-                it_source TYPE ty_string_tt
-      RAISING   lcx_exception
-                cx_sy_dyn_call_error.
-ENDCLASS.
-
-CLASS lcl_object_oriented_base IMPLEMENTATION.
-
-  METHOD lif_object_oriented_object_fnc~create.
-    ASSERT 0 = 1. "Subclass responsibility
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~deserialize_source.
-    TRY.
-        deserialize_abap_source_new(
-          is_clskey = is_key
-          it_source = it_source ).
-      CATCH cx_sy_dyn_call_error.
-        deserialize_abap_source_old(
-          is_clskey = is_key
-          it_source = it_source ).
-    ENDTRY.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~generate_locals.
-    ASSERT 0 = 1. "Subclass responsibility
-  ENDMETHOD.
-
-  METHOD deserialize_abap_source_old.
-    "for backwards compatability down to 702
-
+  METHOD serialize_abap_old.
+* for old ABAP AS versions
     DATA: lo_source TYPE REF TO cl_oo_source.
+
 
     CREATE OBJECT lo_source
       EXPORTING
@@ -14847,343 +14347,77 @@ CLASS lcl_object_oriented_base IMPLEMENTATION.
       lcx_exception=>raise( 'error from CL_OO_SOURCE' ).
     ENDIF.
 
-    TRY.
-        lo_source->access_permission( seok_access_modify ).
-        lo_source->set_source( it_source ).
-        lo_source->save( ).
-        lo_source->access_permission( seok_access_free ).
-      CATCH cx_oo_access_permission.
-        lcx_exception=>raise( 'permission error' ).
-      CATCH cx_oo_source_save_failure.
-        lcx_exception=>raise( 'save failure' ).
-    ENDTRY.
+    lo_source->read( 'A' ).
+    rt_source = lo_source->get_old_source( ).
+    remove_signatures( CHANGING ct_source = rt_source ).
 
-  ENDMETHOD.
+  ENDMETHOD.                    "serialize_abap
 
-  METHOD deserialize_abap_source_new.
-    DATA: lo_factory TYPE REF TO object,
-          lo_source  TYPE REF TO object.
+  METHOD serialize_abap_new.
 
+    DATA: lo_source   TYPE REF TO object,
+          lo_instance TYPE REF TO object.
+
+* do not call the class/methods statically, as it will
+* give syntax errors on old versions
     CALL METHOD ('CL_OO_FACTORY')=>('CREATE_INSTANCE')
       RECEIVING
-        result = lo_factory.
+        result = lo_instance.
 
-    CALL METHOD lo_factory->('CREATE_CLIF_SOURCE')
+    CALL METHOD lo_instance->('CREATE_CLIF_SOURCE')
       EXPORTING
         clif_name = is_clskey-clsname
+        version   = 'A'
       RECEIVING
         result    = lo_source.
 
-    TRY.
-        CALL METHOD lo_source->('IF_OO_CLIF_SOURCE~LOCK').
-      CATCH cx_oo_access_permission.
-        lcx_exception=>raise( 'source_new, access permission exception' ).
-    ENDTRY.
-
-    CALL METHOD lo_source->('IF_OO_CLIF_SOURCE~SET_SOURCE')
-      EXPORTING
-        source = it_source.
-
-    CALL METHOD lo_source->('IF_OO_CLIF_SOURCE~SAVE').
-
-    CALL METHOD lo_source->('IF_OO_CLIF_SOURCE~UNLOCK').
-
-  ENDMETHOD.
-  METHOD lif_object_oriented_object_fnc~add_to_activation_list.
-    lcl_objects_activation=>add_item( is_item ).
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~update_descriptions.
-    DELETE FROM seocompotx WHERE clsname = is_key-clsname.
-    INSERT seocompotx FROM TABLE it_descriptions.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~insert_text_pool.
-    ASSERT 0 = 1. "Subclass responsibility
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~create_sotr.
-    ASSERT 0 = 1. "Subclass responsibility
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~create_documentation.
-    CALL FUNCTION 'DOCU_UPD'
-      EXPORTING
-        id       = 'CL'
-        langu    = iv_language
-        object   = iv_object_name
-      TABLES
-        line     = it_lines
-      EXCEPTIONS
-        ret_code = 1
-        OTHERS   = 2.
-    IF sy-subrc <> 0.
-      lcx_exception=>raise( 'error from DOCU_UPD' ).
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~get_includes.
-    ASSERT 0 = 1. "Subclass responsibility
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~exists.
-    CALL FUNCTION 'SEO_CLASS_EXISTENCE_CHECK'
-      EXPORTING
-        clskey        = iv_object_name
-      EXCEPTIONS
-        not_specified = 1
-        not_existing  = 2
-        is_interface  = 3
-        no_text       = 4
-        inconsistent  = 5
-        OTHERS        = 6.
-    rv_exists = boolc( sy-subrc <> 2 ).
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~serialize_abap.
-    DATA lo_oo_serializer TYPE REF TO lcl_oo_object_serializer.
-    CREATE OBJECT lo_oo_serializer.
-    CASE iv_type.
-      WHEN seop_ext_class_locals_def.
-        rt_source = lo_oo_serializer->serialize_locals_def( is_class_key ).
-      WHEN seop_ext_class_locals_imp.
-        rt_source = lo_oo_serializer->serialize_locals_imp( is_class_key ).
-      WHEN seop_ext_class_macros.
-        rt_source = lo_oo_serializer->serialize_macros( is_class_key ).
-      WHEN seop_ext_class_testclasses.
-        rt_source = lo_oo_serializer->serialize_testclasses( is_class_key ).
-        mv_skip_test_classes = lo_oo_serializer->are_test_classes_skipped( ).
-      WHEN OTHERS.
-        rt_source = lo_oo_serializer->serialize_abap_clif_source( is_class_key ).
-    ENDCASE.
-  ENDMETHOD.
-  METHOD lif_object_oriented_object_fnc~get_skip_test_classes.
-    rv_skip = mv_skip_test_classes.
-  ENDMETHOD.
-  METHOD lif_object_oriented_object_fnc~get_class_properties.
-    ASSERT 0 = 1. "Subclass responsibility
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~get_interface_properties.
-    ASSERT 0 = 1. "Subclass responsibility
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~read_text_pool.
-    ASSERT 0 = 1. "Subclass responsibility
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~read_sotr.
-    ASSERT 0 = 1. "Subclass responsibility
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~read_documentation.
-    DATA:
-      lv_state  TYPE dokstate,
-      lv_object TYPE dokhl-object,
-      lt_lines  TYPE tlinetab.
-
-    lv_object = iv_class_name.
-
-    CALL FUNCTION 'DOCU_GET'
-      EXPORTING
-        id                = 'CL'
-        langu             = iv_language
-        object            = lv_object
+    CALL METHOD lo_source->('GET_SOURCE')
       IMPORTING
-        dokstate          = lv_state
-      TABLES
-        line              = lt_lines
-      EXCEPTIONS
-        no_docu_on_screen = 1
-        no_docu_self_def  = 2
-        no_docu_temp      = 3
-        ret_code          = 4
-        OTHERS            = 5.
-    IF sy-subrc = 0 AND lv_state = 'R'.
-      rt_lines = lt_lines.
-    ELSE.
-      CLEAR rt_lines.
-    ENDIF.
+        source = rt_source.
+
   ENDMETHOD.
 
-  METHOD lif_object_oriented_object_fnc~read_descriptions.
-    SELECT * FROM seocompotx INTO TABLE rt_descriptions
-      WHERE clsname = iv_obejct_name.
-    DELETE rt_descriptions WHERE descript IS INITIAL.
-  ENDMETHOD.
+  METHOD remove_signatures.
 
-  METHOD lif_object_oriented_object_fnc~delete.
-    ASSERT 0 = 1. "Subclass responsibility
-  ENDMETHOD.
+* signatures messes up in CL_OO_SOURCE when deserializing and serializing
+* within same session
 
-ENDCLASS.
-
-"Backdoor injection for test purposes
-CLASS lth_oo_factory_injector DEFINITION DEFERRED.
-
-CLASS lcl_object_oriented_factory DEFINITION
-  FRIENDS lth_oo_factory_injector.
-  PUBLIC SECTION.
-    CLASS-METHODS:
-      make
-        IMPORTING
-          iv_object_type                   TYPE tadir-object
-        RETURNING
-          VALUE(ro_object_oriented_object) TYPE REF TO lif_object_oriented_object_fnc.
-  PRIVATE SECTION.
-    CLASS-DATA:
-        go_object_oriented_object TYPE REF TO lif_object_oriented_object_fnc.
-ENDCLASS.
-"lcl_object_oriented_factory implementation is in include ZABAPGIT_OBJECT_OO_FACTORY.
-"Reason: In this way, clas and intf specific OO functions implementations can be done
-"at the own includes.
+    DATA: lv_begin  TYPE string,
+          lv_end    TYPE string,
+          lv_remove TYPE sap_bool,
+          lv_source LIKE LINE OF ct_source.
 
 
-****************************************************
-* abapmerge - ZABAPGIT_OBJECT_CLAS
-****************************************************
-*&---------------------------------------------------------------------*
-*&  Include           ZABAPGIT_OBJECT_CLAS
-*&---------------------------------------------------------------------*
+    CONCATENATE '* <SIGNATURE>------------------------------------'
+      '---------------------------------------------------+'
+      INTO lv_begin.
 
-*----------------------------------------------------------------------*
-*       CLASS lcl_object_clas DEFINITION
-*----------------------------------------------------------------------*
-*
-*----------------------------------------------------------------------*
-CLASS lcl_object_clas DEFINITION INHERITING FROM lcl_objects_program.
+    CONCATENATE '* +------------------------------------------------'
+      '--------------------------------------</SIGNATURE>'
+      INTO lv_end.
 
-  PUBLIC SECTION.
-    INTERFACES lif_object.
-    ALIASES mo_files FOR lif_object~mo_files.
-    METHODS constructor
-      IMPORTING
-        is_item     TYPE ty_item
-        iv_language TYPE spras.
-
-  PROTECTED SECTION.
-    METHODS deserialize_abap
-      IMPORTING io_xml     TYPE REF TO lcl_xml_input
-                iv_package TYPE devclass
-      RAISING   lcx_exception.
-
-    METHODS deserialize_docu
-      IMPORTING io_xml TYPE REF TO lcl_xml_input
-      RAISING   lcx_exception.
-    DATA mo_object_oriented_object_fct TYPE REF TO lif_object_oriented_object_fnc.
-  PRIVATE SECTION.
-    DATA mv_skip_testclass TYPE abap_bool.
-
-    METHODS deserialize_tpool
-      IMPORTING io_xml TYPE REF TO lcl_xml_input
-      RAISING   lcx_exception.
-
-    METHODS deserialize_sotr
-      IMPORTING io_xml     TYPE REF TO lcl_xml_input
-                iv_package TYPE devclass
-      RAISING   lcx_exception.
-
-
-    METHODS serialize_xml
-      IMPORTING io_xml TYPE REF TO lcl_xml_output
-      RAISING   lcx_exception.
-
-
-ENDCLASS.                    "lcl_object_dtel DEFINITION
-
-*----------------------------------------------------------------------*
-*       CLASS lcl_object_clas IMPLEMENTATION
-*----------------------------------------------------------------------*
-*
-*----------------------------------------------------------------------*
-CLASS lcl_object_clas IMPLEMENTATION.
-
-  METHOD lif_object~has_changed_since.
-    DATA:
-      lt_includes TYPE seoincl_t.
-
-    FIELD-SYMBOLS <incl> LIKE LINE OF lt_includes.
-
-    lt_includes = mo_object_oriented_object_fct->get_includes( ms_item-obj_name ).
-    LOOP AT lt_includes ASSIGNING <incl>.
-      rv_changed = check_prog_changed_since(
-        iv_program   = <incl>
-        iv_timestamp = iv_timestamp
-        iv_skip_gui  = abap_true ).
-      IF rv_changed = abap_true.
-        RETURN.
+    lv_remove = abap_false.
+    LOOP AT ct_source INTO lv_source.
+      IF lv_source = lv_begin.
+        lv_remove = abap_true.
+      ENDIF.
+      IF lv_remove = abap_true.
+        DELETE ct_source INDEX sy-tabix.
+      ENDIF.
+      IF lv_source = lv_end.
+        lv_remove = abap_false.
       ENDIF.
     ENDLOOP.
-  ENDMETHOD.  "lif_object~has_changed_since
 
-  METHOD lif_object~get_metadata.
-    rs_metadata = get_metadata( ).
-  ENDMETHOD.                    "lif_object~get_metadata
-
-  METHOD lif_object~changed_by.
-
-    TYPES: BEGIN OF ty_includes,
-             programm TYPE programm,
-           END OF ty_includes.
-
-    TYPES: BEGIN OF ty_reposrc,
-             unam  TYPE reposrc-unam,
-             udat  TYPE reposrc-udat,
-             utime TYPE reposrc-utime,
-           END OF ty_reposrc.
-
-    DATA: lt_reposrc  TYPE STANDARD TABLE OF ty_reposrc,
-          ls_reposrc  LIKE LINE OF lt_reposrc,
-          lt_includes TYPE STANDARD TABLE OF ty_includes.
-
-    lt_includes = mo_object_oriented_object_fct->get_includes( ms_item-obj_name ).
-    ASSERT lines( lt_includes ) > 0.
-
-    SELECT unam udat utime FROM reposrc
-      INTO TABLE lt_reposrc
-      FOR ALL ENTRIES IN lt_includes
-      WHERE progname = lt_includes-programm
-      AND   r3state = 'A'.
-    IF sy-subrc <> 0.
-      rv_user = c_user_unknown.
-    ELSE.
-      SORT lt_reposrc BY udat DESCENDING utime DESCENDING.
-      READ TABLE lt_reposrc INDEX 1 INTO ls_reposrc.
-      ASSERT sy-subrc = 0.
-      rv_user = ls_reposrc-unam.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD lif_object~exists.
-    DATA: ls_class_key TYPE seoclskey.
-    ls_class_key-clsname = ms_item-obj_name.
-
-    rv_bool = mo_object_oriented_object_fct->exists( iv_object_name = ls_class_key ).
-  ENDMETHOD.                    "lif_object~exists
-
-  METHOD lif_object~jump.
-    CALL FUNCTION 'RS_TOOL_ACCESS'
-      EXPORTING
-        operation     = 'SHOW'
-        object_name   = ms_item-obj_name
-        object_type   = 'CLAS'
-        in_new_window = abap_true.
-  ENDMETHOD.                    "jump
-
-  METHOD lif_object~delete.
-    DATA: ls_clskey TYPE seoclskey.
-    ls_clskey-clsname = ms_item-obj_name.
-
-    mo_object_oriented_object_fct->delete( ls_clskey ).
-  ENDMETHOD.                    "delete
+  ENDMETHOD.                    "remove_signatures
 
   METHOD lif_object~serialize.
 
-    DATA: lt_source    TYPE seop_source_string,
-          ls_class_key TYPE seoclskey.
+    DATA: lt_source TYPE seop_source_string,
+          ls_clskey TYPE seoclskey.
 
-    ls_class_key-clsname = ms_item-obj_name.
+
+    ls_clskey-clsname = ms_item-obj_name.
 
     IF lif_object~exists( ) = abap_false.
       RETURN.
@@ -15198,446 +14432,46 @@ CLASS lcl_object_clas IMPLEMENTATION.
         version = seoc_version_inactive
         force   = seox_true.
 
-    lt_source = mo_object_oriented_object_fct->serialize_abap( ls_class_key ).
+    TRY.
+        lt_source = serialize_abap_new( ls_clskey ).
+      CATCH cx_sy_dyn_call_error.
+        lt_source = serialize_abap_old( ls_clskey ).
+    ENDTRY.
 
     mo_files->add_abap( lt_source ).
 
-    lt_source = mo_object_oriented_object_fct->serialize_abap(
-      is_class_key = ls_class_key
-      iv_type      = seop_ext_class_locals_def ).
-    IF NOT lt_source[] IS INITIAL.
-      mo_files->add_abap( iv_extra = 'locals_def'
-                          it_abap  = lt_source ).           "#EC NOTEXT
-    ENDIF.
+    IF ms_item-obj_type = 'CLAS'.
+      lt_source = serialize_locals_def( ls_clskey ).
+      IF NOT lt_source[] IS INITIAL.
+        mo_files->add_abap( iv_extra = 'locals_def'
+                            it_abap  = lt_source ).         "#EC NOTEXT
+      ENDIF.
 
-    lt_source = mo_object_oriented_object_fct->serialize_abap(
-      is_class_key = ls_class_key
-      iv_type      = seop_ext_class_locals_imp ).
-    IF NOT lt_source[] IS INITIAL.
-      mo_files->add_abap( iv_extra = 'locals_imp'
-                          it_abap  = lt_source ).           "#EC NOTEXT
-    ENDIF.
+      lt_source = serialize_locals_imp( ls_clskey ).
+      IF NOT lt_source[] IS INITIAL.
+        mo_files->add_abap( iv_extra = 'locals_imp'
+                            it_abap  = lt_source ).         "#EC NOTEXT
+      ENDIF.
 
-    lt_source = mo_object_oriented_object_fct->serialize_abap(
-      is_class_key            = ls_class_key
-      iv_type                 = seop_ext_class_testclasses ).
+      lt_source = serialize_testclasses( ls_clskey ).
+      IF NOT lt_source[] IS INITIAL AND mv_skip_testclass = abap_false.
+        mo_files->add_abap( iv_extra = 'testclasses'
+                            it_abap  = lt_source ).         "#EC NOTEXT
+      ENDIF.
 
-    mv_skip_testclass = mo_object_oriented_object_fct->get_skip_test_classes( ).
-    IF NOT lt_source[] IS INITIAL AND mv_skip_testclass = abap_false.
-      mo_files->add_abap( iv_extra = 'testclasses'
-                          it_abap  = lt_source ).           "#EC NOTEXT
-    ENDIF.
-
-    lt_source = mo_object_oriented_object_fct->serialize_abap(
-      is_class_key = ls_class_key
-      iv_type      = seop_ext_class_macros ).
-    IF NOT lt_source[] IS INITIAL.
-      mo_files->add_abap( iv_extra = 'macros'
-                          it_abap  = lt_source ).           "#EC NOTEXT
+      lt_source = serialize_macros( ls_clskey ).
+      IF NOT lt_source[] IS INITIAL.
+        mo_files->add_abap( iv_extra = 'macros'
+                            it_abap  = lt_source ).         "#EC NOTEXT
+      ENDIF.
     ENDIF.
 
     serialize_xml( io_xml ).
 
   ENDMETHOD.                    "serialize
 
+  METHOD read_sotr.
 
-
-  METHOD serialize_xml.
-
-    DATA: ls_vseoclass    TYPE vseoclass,
-          lt_tpool        TYPE textpool_table,
-          lv_object       TYPE dokhl-object,
-          lv_state        TYPE dokhl-dokstate,
-          lt_descriptions TYPE ty_seocompotx_tt,
-          ls_clskey       TYPE seoclskey,
-          lt_sotr         TYPE ty_sotr_tt,
-          lt_lines        TYPE tlinetab.
-
-
-    ls_clskey-clsname = ms_item-obj_name.
-
-    ls_vseoclass = mo_object_oriented_object_fct->get_class_properties( is_class_key = ls_clskey ).
-
-    CLEAR: ls_vseoclass-uuid,
-           ls_vseoclass-author,
-           ls_vseoclass-createdon,
-           ls_vseoclass-changedby,
-           ls_vseoclass-changedon,
-           ls_vseoclass-r3release,
-           ls_vseoclass-chgdanyby,
-           ls_vseoclass-chgdanyon.
-
-    IF mv_skip_testclass = abap_true.
-      CLEAR ls_vseoclass-with_unit_tests.
-    ENDIF.
-
-    io_xml->add( iv_name = 'VSEOCLASS'
-                 ig_data = ls_vseoclass ).
-
-    lt_tpool = mo_object_oriented_object_fct->read_text_pool(
-      iv_class_name = ls_clskey-clsname
-      iv_language   = mv_language ).
-    io_xml->add( iv_name = 'TPOOL'
-                 ig_data = add_tpool( lt_tpool ) ).
-
-    IF ls_vseoclass-category = seoc_category_exception.
-      lt_sotr =  mo_object_oriented_object_fct->read_sotr( ms_item-obj_name ).
-      IF lines( lt_sotr ) > 0.
-        io_xml->add( iv_name = 'SOTR'
-                     ig_data = lt_sotr ).
-      ENDIF.
-    ENDIF.
-
-    lt_lines = mo_object_oriented_object_fct->read_documentation(
-      iv_class_name = ls_clskey-clsname
-      iv_language   = mv_language ).
-    IF lines( lt_lines ) > 0.
-      io_xml->add( iv_name = 'LINES'
-                   ig_data = lt_lines ).
-    ENDIF.
-
-    lt_descriptions = mo_object_oriented_object_fct->read_descriptions( ls_clskey-clsname ).
-    IF lines( lt_descriptions ) > 0.
-      io_xml->add( iv_name = 'DESCRIPTIONS'
-                   ig_data = lt_descriptions ).
-    ENDIF.
-
-  ENDMETHOD.                    "serialize_xml
-
-  METHOD lif_object~deserialize.
-    deserialize_abap( io_xml     = io_xml
-                      iv_package = iv_package ).
-
-    deserialize_tpool( io_xml ).
-
-    deserialize_sotr( io_xml     = io_xml
-                      iv_package = iv_package ).
-
-    deserialize_docu( io_xml ).
-  ENDMETHOD.                    "deserialize
-
-  METHOD deserialize_sotr.
-    "OTR stands for Online Text Repository
-    DATA: lt_sotr    TYPE ty_sotr_tt,
-          lt_objects TYPE sotr_objects.
-
-    io_xml->read( EXPORTING iv_name = 'SOTR'
-                  CHANGING cg_data = lt_sotr ).
-
-    IF lines( lt_sotr ) = 0.
-      RETURN.
-    ENDIF.
-
-    mo_object_oriented_object_fct->create_sotr(
-      iv_package    = iv_package
-      it_sotr       = lt_sotr ).
-  ENDMETHOD.
-
-  METHOD deserialize_docu.
-
-    DATA: lt_lines  TYPE tlinetab,
-          lv_object TYPE dokhl-object.
-
-    io_xml->read( EXPORTING iv_name = 'LINES'
-                  CHANGING cg_data = lt_lines ).
-
-    IF lt_lines[] IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    lv_object = ms_item-obj_name.
-
-    mo_object_oriented_object_fct->create_documentation(
-      it_lines       = lt_lines
-      iv_object_name = lv_object
-      iv_language    = mv_language ).
-  ENDMETHOD.
-
-  METHOD deserialize_tpool.
-
-    DATA: lv_clsname   TYPE seoclsname,
-          lt_tpool_ext TYPE ty_tpool_tt,
-          lt_tpool     TYPE textpool_table.
-
-
-    io_xml->read( EXPORTING iv_name = 'TPOOL'
-                  CHANGING cg_data = lt_tpool_ext ).
-    lt_tpool = read_tpool( lt_tpool_ext ).
-
-    IF lt_tpool[] IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    lv_clsname = ms_item-obj_name.
-
-    mo_object_oriented_object_fct->insert_text_pool(
-      iv_class_name = lv_clsname
-      it_text_pool  = lt_tpool
-      iv_language   = mv_language ).
-
-  ENDMETHOD.                    "deserialize_textpool
-
-  METHOD deserialize_abap.
-
-    DATA: ls_vseoclass             TYPE vseoclass,
-          lt_source                TYPE seop_source_string,
-          lt_local_definitions     TYPE seop_source_string,
-          lt_local_implementations TYPE seop_source_string,
-          lt_local_macros          TYPE seop_source_string,
-          lt_test_classes          TYPE seop_source_string,
-          lt_descriptions          TYPE ty_seocompotx_tt,
-          ls_class_key             TYPE seoclskey.
-
-
-    lt_source = mo_files->read_abap( ).
-
-    lt_local_definitions = mo_files->read_abap( iv_extra = 'locals_def'
-                                                iv_error = abap_false ). "#EC NOTEXT
-
-    lt_local_implementations = mo_files->read_abap( iv_extra = 'locals_imp'
-                                                    iv_error = abap_false ). "#EC NOTEXT
-
-    lt_local_macros = mo_files->read_abap( iv_extra = 'macros'
-                                           iv_error = abap_false ). "#EC NOTEXT
-
-    lt_test_classes = mo_files->read_abap( iv_extra = 'testclasses'
-                                           iv_error = abap_false ). "#EC NOTEXT
-
-    ls_class_key-clsname = ms_item-obj_name.
-
-    io_xml->read( EXPORTING iv_name = 'VSEOCLASS'
-                  CHANGING cg_data = ls_vseoclass ).
-
-    mo_object_oriented_object_fct->create(
-      EXPORTING
-        iv_package    = iv_package
-      CHANGING
-        is_properties = ls_vseoclass ).
-    mo_object_oriented_object_fct->generate_locals(
-      is_key                   = ls_class_key
-      iv_force                 = seox_true
-      it_local_definitions     = lt_local_definitions
-      it_local_implementations = lt_local_implementations
-      it_local_macros          = lt_local_macros
-      it_local_test_classes    = lt_test_classes ).
-
-    mo_object_oriented_object_fct->deserialize_source(
-      is_key               = ls_class_key
-      it_source            = lt_source ).
-
-    io_xml->read( EXPORTING iv_name = 'DESCRIPTIONS'
-                  CHANGING cg_data = lt_descriptions ).
-
-    mo_object_oriented_object_fct->update_descriptions(
-      is_key          = ls_class_key
-      it_descriptions = lt_descriptions ).
-
-    mo_object_oriented_object_fct->add_to_activation_list( is_item = ms_item  ).
-  ENDMETHOD.                    "deserialize
-
-  METHOD lif_object~compare_to_remote_version.
-    CREATE OBJECT ro_comparison_result TYPE lcl_null_comparison_result.
-  ENDMETHOD.
-
-  METHOD constructor.
-    super->constructor(
-      is_item     = is_item
-      iv_language = iv_language ).
-    mo_object_oriented_object_fct = lcl_object_oriented_factory=>make( iv_object_type = ms_item-obj_type ).
-  ENDMETHOD.
-
-ENDCLASS.                    "lcl_object_CLAS IMPLEMENTATION
-
-
-CLASS lcl_object_oriented_class DEFINITION
-  INHERITING FROM lcl_object_oriented_base.
-  PUBLIC SECTION.
-    METHODS:
-      lif_object_oriented_object_fnc~create REDEFINITION,
-      lif_object_oriented_object_fnc~generate_locals REDEFINITION,
-      lif_object_oriented_object_fnc~insert_text_pool REDEFINITION,
-      lif_object_oriented_object_fnc~create_sotr REDEFINITION,
-      lif_object_oriented_object_fnc~get_includes REDEFINITION,
-      lif_object_oriented_object_fnc~get_class_properties REDEFINITION,
-      lif_object_oriented_object_fnc~read_text_pool REDEFINITION,
-      lif_object_oriented_object_fnc~read_sotr REDEFINITION,
-      lif_object_oriented_object_fnc~delete REDEFINITION.
-
-ENDCLASS.
-CLASS lcl_object_oriented_class IMPLEMENTATION.
-  METHOD lif_object_oriented_object_fnc~create.
-    CALL FUNCTION 'SEO_CLASS_CREATE_COMPLETE'
-      EXPORTING
-        devclass        = iv_package
-        overwrite       = iv_overwrite
-      CHANGING
-        class           = is_properties
-      EXCEPTIONS
-        existing        = 1
-        is_interface    = 2
-        db_error        = 3
-        component_error = 4
-        no_access       = 5
-        other           = 6
-        OTHERS          = 7.
-    IF sy-subrc <> 0.
-      lcx_exception=>raise( 'error from SEO_CLASS_CREATE_COMPLETE' ).
-    ENDIF.
-  ENDMETHOD.
-  METHOD lif_object_oriented_object_fnc~generate_locals.
-    CALL FUNCTION 'SEO_CLASS_GENERATE_LOCALS'
-      EXPORTING
-        clskey                 = is_key
-        force                  = iv_force
-        locals_def             = it_local_definitions
-        locals_imp             = it_local_implementations
-        locals_mac             = it_local_macros
-        locals_testclasses     = it_local_test_classes
-      EXCEPTIONS
-        not_existing           = 1
-        model_only             = 2
-        locals_not_generated   = 3
-        locals_not_initialised = 4
-        OTHERS                 = 5.
-    IF sy-subrc <> 0.
-      lcx_exception=>raise( 'error from generate_locals' ).
-    ENDIF.
-  ENDMETHOD.
-  METHOD lif_object_oriented_object_fnc~insert_text_pool.
-    DATA: lv_cp        TYPE program.
-
-    lv_cp = cl_oo_classname_service=>get_classpool_name( iv_class_name ).
-
-    INSERT TEXTPOOL lv_cp
-      FROM it_text_pool
-      LANGUAGE iv_language
-      STATE 'I'.
-    IF sy-subrc <> 0.
-      lcx_exception=>raise( 'error from INSERT TEXTPOOL' ).
-    ENDIF.
-
-    lcl_objects_activation=>add( iv_type = 'REPT'
-                                 iv_name = lv_cp ).
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~create_sotr.
-    DATA: lt_sotr    TYPE ty_sotr_tt,
-          lt_objects TYPE sotr_objects,
-          ls_paket   TYPE sotr_pack,
-          lv_object  LIKE LINE OF lt_objects.
-
-    FIELD-SYMBOLS: <ls_sotr> LIKE LINE OF lt_sotr.
-
-    LOOP AT it_sotr ASSIGNING <ls_sotr>.
-      CALL FUNCTION 'SOTR_OBJECT_GET_OBJECTS'
-        EXPORTING
-          object_vector    = <ls_sotr>-header-objid_vec
-        IMPORTING
-          objects          = lt_objects
-        EXCEPTIONS
-          object_not_found = 1
-          OTHERS           = 2.
-      IF sy-subrc <> 0.
-        lcx_exception=>raise( 'error from SOTR_OBJECT_GET_OBJECTS' ).
-      ENDIF.
-
-      READ TABLE lt_objects INDEX 1 INTO lv_object.
-      ASSERT sy-subrc = 0.
-
-      ls_paket-paket = iv_package.
-
-      CALL FUNCTION 'SOTR_CREATE_CONCEPT'
-        EXPORTING
-          paket                         = ls_paket
-          crea_lan                      = <ls_sotr>-header-crea_lan
-          alias_name                    = <ls_sotr>-header-alias_name
-          object                        = lv_object
-          entries                       = <ls_sotr>-entries
-          concept_default               = <ls_sotr>-header-concept
-        EXCEPTIONS
-          package_missing               = 1
-          crea_lan_missing              = 2
-          object_missing                = 3
-          paket_does_not_exist          = 4
-          alias_already_exist           = 5
-          object_type_not_found         = 6
-          langu_missing                 = 7
-          identical_context_not_allowed = 8
-          text_too_long                 = 9
-          error_in_update               = 10
-          no_master_langu               = 11
-          error_in_concept_id           = 12
-          alias_not_allowed             = 13
-          tadir_entry_creation_failed   = 14
-          internal_error                = 15
-          error_in_correction           = 16
-          user_cancelled                = 17
-          no_entry_found                = 18
-          OTHERS                        = 19.
-      IF sy-subrc <> 0.
-        lcx_exception=>raise( 'error from SOTR_CREATE_CONCEPT' ).
-      ENDIF.
-    ENDLOOP.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~get_includes.
-* note: includes returned might not exist
-* method cl_oo_classname_service=>GET_ALL_CLASS_INCLUDES does not exist in 702
-
-    DATA: lv_class_name TYPE seoclsname,
-          lt_methods    TYPE seop_methods_w_include.
-
-    FIELD-SYMBOLS: <ls_method> LIKE LINE OF lt_methods.
-
-    lv_class_name = iv_object_name.
-
-    APPEND cl_oo_classname_service=>get_ccdef_name( lv_class_name ) TO rt_includes.
-    APPEND cl_oo_classname_service=>get_ccmac_name( lv_class_name ) TO rt_includes.
-    APPEND cl_oo_classname_service=>get_ccimp_name( lv_class_name ) TO rt_includes.
-    APPEND cl_oo_classname_service=>get_cl_name( lv_class_name ) TO rt_includes.
-    APPEND cl_oo_classname_service=>get_ccau_name( lv_class_name ) TO rt_includes.
-    APPEND cl_oo_classname_service=>get_pubsec_name( lv_class_name ) TO rt_includes.
-    APPEND cl_oo_classname_service=>get_prosec_name( lv_class_name ) TO rt_includes.
-    APPEND cl_oo_classname_service=>get_prisec_name( lv_class_name ) TO rt_includes.
-    APPEND cl_oo_classname_service=>get_classpool_name( lv_class_name ) TO rt_includes.
-    APPEND cl_oo_classname_service=>get_ct_name( lv_class_name ) TO rt_includes.
-    APPEND cl_oo_classname_service=>get_cs_name( lv_class_name ) TO rt_includes.
-
-    lt_methods = cl_oo_classname_service=>get_all_method_includes( lv_class_name ).
-    LOOP AT lt_methods ASSIGNING <ls_method>.
-      APPEND <ls_method>-incname TO rt_includes.
-    ENDLOOP.
-
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~get_class_properties.
-    CALL FUNCTION 'SEO_CLIF_GET'
-      EXPORTING
-        cifkey       = is_class_key
-        version      = seoc_version_active
-      IMPORTING
-        class        = rs_class_properties
-      EXCEPTIONS
-        not_existing = 1
-        deleted      = 2
-        model_only   = 3
-        OTHERS       = 4.
-    IF sy-subrc = 1.
-      RETURN. " in case only inactive version exists
-    ELSEIF sy-subrc <> 0.
-      lcx_exception=>raise( 'error from seo_clif_get' ).
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~read_text_pool.
-    DATA:
-     lv_cp TYPE program.
-
-    lv_cp = cl_oo_classname_service=>get_classpool_name( iv_class_name ).
-    READ TEXTPOOL lv_cp INTO rt_text_pool LANGUAGE iv_language. "#EC CI_READ_REP
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~read_sotr.
     DATA: lv_concept    TYPE sotr_head-concept,
           lt_seocompodf TYPE STANDARD TABLE OF seocompodf WITH DEFAULT KEY,
           ls_header     TYPE sotr_head,
@@ -15650,7 +14484,7 @@ CLASS lcl_object_oriented_class IMPLEMENTATION.
 
     SELECT * FROM seocompodf
       INTO TABLE lt_seocompodf
-      WHERE clsname = iv_object_name
+      WHERE clsname = ms_item-obj_name
       AND version = '1'
       AND exposure = '2'
       AND attdecltyp = '2'
@@ -15694,22 +14528,329 @@ CLASS lcl_object_oriented_class IMPLEMENTATION.
       <ls_sotr>-entries = lt_entries.
 
     ENDLOOP.
+
   ENDMETHOD.
 
-  METHOD lif_object_oriented_object_fnc~delete.
-    CALL FUNCTION 'SEO_CLASS_DELETE_COMPLETE'
+  METHOD serialize_xml.
+
+    DATA: ls_vseoclass    TYPE vseoclass,
+          lv_cp           TYPE program,
+          lt_tpool        TYPE textpool_table,
+          lv_object       TYPE dokhl-object,
+          lv_state        TYPE dokhl-dokstate,
+          lt_descriptions TYPE ty_seocompotx_tt,
+          ls_vseointerf   TYPE vseointerf,
+          ls_clskey       TYPE seoclskey,
+          lt_sotr         TYPE ty_sotr_tt,
+          lt_lines        TYPE tlinetab.
+
+
+    ls_clskey-clsname = ms_item-obj_name.
+
+    CALL FUNCTION 'SEO_CLIF_GET'
       EXPORTING
-        clskey       = is_deletion_key
+        cifkey       = ls_clskey
+        version      = seoc_version_active
+      IMPORTING
+        class        = ls_vseoclass
+        interface    = ls_vseointerf
       EXCEPTIONS
         not_existing = 1
-        is_interface = 2
-        db_error     = 3
-        no_access    = 4
-        other        = 5
-        OTHERS       = 6.
-    IF sy-subrc <> 0.
-      lcx_exception=>raise( 'Error from SEO_CLASS_DELETE_COMPLETE' ).
+        deleted      = 2
+        model_only   = 3
+        OTHERS       = 4.
+    IF sy-subrc = 1.
+      RETURN. " in case only inactive version exists
+    ELSEIF sy-subrc <> 0.
+      lcx_exception=>raise( 'error from seo_clif_get' ).
     ENDIF.
+
+    CLEAR: ls_vseoclass-uuid,
+           ls_vseoclass-author,
+           ls_vseoclass-createdon,
+           ls_vseoclass-changedby,
+           ls_vseoclass-changedon,
+           ls_vseoclass-r3release,
+           ls_vseoclass-chgdanyby,
+           ls_vseoclass-chgdanyon.
+
+    IF mv_skip_testclass = abap_true.
+      CLEAR ls_vseoclass-with_unit_tests.
+    ENDIF.
+
+    CLEAR: ls_vseointerf-uuid,
+           ls_vseointerf-author,
+           ls_vseointerf-createdon,
+           ls_vseointerf-changedby,
+           ls_vseointerf-changedon,
+           ls_vseointerf-r3release.
+
+    CASE ms_item-obj_type.
+      WHEN 'CLAS'.
+        io_xml->add( iv_name = 'VSEOCLASS'
+                     ig_data = ls_vseoclass ).
+
+        lv_cp = cl_oo_classname_service=>get_classpool_name( ls_clskey-clsname ).
+        READ TEXTPOOL lv_cp INTO lt_tpool LANGUAGE mv_language. "#EC CI_READ_REP
+        io_xml->add( iv_name = 'TPOOL'
+                     ig_data = add_tpool( lt_tpool ) ).
+
+        IF ls_vseoclass-category = seoc_category_exception.
+          lt_sotr = read_sotr( ).
+          IF lines( lt_sotr ) > 0.
+            io_xml->add( iv_name = 'SOTR'
+                         ig_data = lt_sotr ).
+          ENDIF.
+        ENDIF.
+      WHEN 'INTF'.
+        io_xml->add( iv_name = 'VSEOINTERF'
+                     ig_data = ls_vseointerf ).
+      WHEN OTHERS.
+        ASSERT 0 = 1.
+    ENDCASE.
+
+    lv_object = ls_clskey-clsname.
+    CALL FUNCTION 'DOCU_GET'
+      EXPORTING
+        id                = 'CL'
+        langu             = mv_language
+        object            = lv_object
+      IMPORTING
+        dokstate          = lv_state
+      TABLES
+        line              = lt_lines
+      EXCEPTIONS
+        no_docu_on_screen = 1
+        no_docu_self_def  = 2
+        no_docu_temp      = 3
+        ret_code          = 4
+        OTHERS            = 5.
+    IF sy-subrc = 0 AND lv_state = 'R'.
+      io_xml->add( iv_name = 'LINES'
+                   ig_data = lt_lines ).
+    ENDIF.
+
+    SELECT * FROM seocompotx INTO TABLE lt_descriptions
+      WHERE clsname = ls_clskey-clsname.
+    DELETE lt_descriptions WHERE descript IS INITIAL.
+    IF lines( lt_descriptions ) > 0.
+      io_xml->add( iv_name = 'DESCRIPTIONS'
+                   ig_data = lt_descriptions ).
+    ENDIF.
+
+  ENDMETHOD.                    "serialize_xml
+
+  METHOD lif_object~deserialize.
+    deserialize_abap( io_xml     = io_xml
+                      iv_package = iv_package ).
+
+    deserialize_tpool( io_xml ).
+
+    deserialize_sotr( io_xml     = io_xml
+                      iv_package = iv_package ).
+
+    deserialize_docu( io_xml ).
+  ENDMETHOD.                    "deserialize
+
+  METHOD deserialize_sotr.
+    "OTR stands for Online Text Repository
+    DATA: lt_sotr    TYPE ty_sotr_tt,
+          lt_objects TYPE sotr_objects.
+
+
+    io_xml->read( EXPORTING iv_name = 'SOTR'
+                  CHANGING cg_data = lt_sotr ).
+
+    IF lines( lt_sotr ) = 0.
+      RETURN.
+    ENDIF.
+
+    mo_object_oriented_object->create_sotr(
+      iv_package    = iv_package
+      it_sotr       = lt_sotr ).
+  ENDMETHOD.
+
+  METHOD deserialize_docu.
+
+    DATA: lt_lines  TYPE tlinetab,
+          lv_object TYPE dokhl-object.
+
+    io_xml->read( EXPORTING iv_name = 'LINES'
+                  CHANGING cg_data = lt_lines ).
+
+    IF lt_lines[] IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    lv_object = ms_item-obj_name.
+
+    mo_object_oriented_object->create_documentation(
+      it_lines       = lt_lines
+      iv_object_name = lv_object
+      iv_language    = mv_language ).
+  ENDMETHOD.                    "deserialize_doku
+
+  METHOD deserialize_tpool.
+
+    DATA: lv_clsname   TYPE seoclsname,
+          lt_tpool_ext TYPE ty_tpool_tt,
+          lt_tpool     TYPE textpool_table.
+
+
+    io_xml->read( EXPORTING iv_name = 'TPOOL'
+                  CHANGING cg_data = lt_tpool_ext ).
+    lt_tpool = read_tpool( lt_tpool_ext ).
+
+    IF lt_tpool[] IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    lv_clsname = ms_item-obj_name.
+
+    mo_object_oriented_object->insert_text_pool(
+      iv_class_name = lv_clsname
+      it_text_pool  = lt_tpool
+      iv_language   = mv_language ).
+
+  ENDMETHOD.                    "deserialize_textpool
+
+  METHOD deserialize_abap.
+
+    DATA: ls_vseoclass             TYPE vseoclass,
+          lt_source                TYPE seop_source_string,
+          lt_local_definitions     TYPE seop_source_string,
+          lt_local_implementations TYPE seop_source_string,
+          lt_local_macros          TYPE seop_source_string,
+          lt_test_classes          TYPE seop_source_string,
+          lt_descriptions          TYPE ty_seocompotx_tt,
+          ls_class_key             TYPE seoclskey.
+
+
+    lt_source = mo_files->read_abap( ).
+
+    lt_local_definitions = mo_files->read_abap( iv_extra = 'locals_def'
+                                                iv_error = abap_false ). "#EC NOTEXT
+
+    lt_local_implementations = mo_files->read_abap( iv_extra = 'locals_imp'
+                                                    iv_error = abap_false ). "#EC NOTEXT
+
+    lt_local_macros = mo_files->read_abap( iv_extra = 'macros'
+                                           iv_error = abap_false ). "#EC NOTEXT
+
+    lt_test_classes = mo_files->read_abap( iv_extra = 'testclasses'
+                                           iv_error = abap_false ). "#EC NOTEXT
+
+    ls_class_key-clsname = ms_item-obj_name.
+
+    io_xml->read( EXPORTING iv_name = 'VSEOCLASS'
+                  CHANGING cg_data = ls_vseoclass ).
+
+    mo_object_oriented_object->create(
+      EXPORTING
+        iv_package    = iv_package
+      CHANGING
+        is_properties = ls_vseoclass ).
+    mo_object_oriented_object->generate_locals(
+      is_key                   = ls_class_key
+      iv_force                 = seox_true
+      it_local_definitions     = lt_local_definitions
+      it_local_implementations = lt_local_implementations
+      it_local_macros          = lt_local_macros
+      it_local_test_classes    = lt_test_classes ).
+
+    mo_object_oriented_object->deserialize_source(
+      is_key               = ls_class_key
+      it_source            = lt_source ).
+
+    io_xml->read( EXPORTING iv_name = 'DESCRIPTIONS'
+                  CHANGING cg_data = lt_descriptions ).
+
+    mo_object_oriented_object->update_descriptions(
+      is_key          = ls_class_key
+      it_descriptions = lt_descriptions ).
+
+    mo_object_oriented_object->add_to_activation_list( is_item = ms_item  ).
+  ENDMETHOD.                    "deserialize
+
+  METHOD lif_object~compare_to_remote_version.
+    CREATE OBJECT ro_comparison_result TYPE lcl_null_comparison_result.
+  ENDMETHOD.
+
+  METHOD constructor.
+    super->constructor(
+      is_item     = is_item
+      iv_language = iv_language ).
+    mo_object_oriented_object = lcl_object_oriented_factory=>make( iv_object_type = ms_item-obj_type ).
+  ENDMETHOD.
+
+ENDCLASS.                    "lcl_object_CLAS IMPLEMENTATION
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_object_intf DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_object_intf DEFINITION INHERITING FROM lcl_object_clas FINAL.
+* todo, CLAS + INTF to be refactored, see:
+* https://github.com/larshp/abapGit/issues/21
+  PUBLIC SECTION.
+    METHODS:
+      lif_object~deserialize REDEFINITION,
+      lif_object~has_changed_since REDEFINITION.
+  PROTECTED SECTION.
+    METHODS:
+      deserialize_abap REDEFINITION.
+ENDCLASS.                    "lcl_object_intf DEFINITION
+CLASS lcl_object_intf IMPLEMENTATION.
+  METHOD lif_object~deserialize.
+    deserialize_abap( io_xml     = io_xml
+                      iv_package = iv_package ).
+
+    deserialize_docu( io_xml ).
+  ENDMETHOD.
+  METHOD deserialize_abap.
+    DATA: ls_vseointerf   TYPE vseointerf,
+          lt_source       TYPE seop_source_string,
+          lt_descriptions TYPE ty_seocompotx_tt,
+          ls_clskey       TYPE seoclskey.
+    ls_clskey-clsname = ms_item-obj_name.
+
+    lt_source = mo_files->read_abap( ).
+
+    io_xml->read( EXPORTING iv_name = 'VSEOINTERF'
+                  CHANGING cg_data = ls_vseointerf ).
+
+    mo_object_oriented_object->create(
+      EXPORTING
+        iv_package    = iv_package
+      CHANGING
+        is_properties = ls_vseointerf ).
+
+    mo_object_oriented_object->deserialize_source(
+      is_key               = ls_clskey
+      it_source            = lt_source ).
+
+    io_xml->read( EXPORTING iv_name = 'DESCRIPTIONS'
+                  CHANGING cg_data = lt_descriptions ).
+
+    mo_object_oriented_object->update_descriptions(
+      is_key          = ls_clskey
+      it_descriptions = lt_descriptions ).
+
+    mo_object_oriented_object->add_to_activation_list( is_item = ms_item ).
+  ENDMETHOD.
+  METHOD lif_object~has_changed_since.
+    DATA:
+      lv_program  TYPE program,
+      lt_includes TYPE seoincl_t.
+
+    lt_includes = mo_object_oriented_object->get_includes( ms_item-obj_name ).
+    READ TABLE lt_includes INDEX 1 INTO lv_program.
+    "lv_program = cl_oo_classname_service=>get_interfacepool_name( lv_clsname ).
+    rv_changed = check_prog_changed_since(
+      iv_program   = lv_program
+      iv_timestamp = iv_timestamp
+      iv_skip_gui  = abap_true ).
   ENDMETHOD.
 
 ENDCLASS.
@@ -19816,329 +18957,6 @@ ENDCLASS.                    "lcl_object_iatu IMPLEMENTATION
 
 
 ****************************************************
-* abapmerge - ZABAPGIT_OBJECT_INTF
-****************************************************
-*&---------------------------------------------------------------------*
-*&  Include           ZABAPGIT_OBJECT_INTF
-*&---------------------------------------------------------------------*
-
-*----------------------------------------------------------------------*
-*       CLASS lcl_object_intf DEFINITION
-*----------------------------------------------------------------------*
-*
-*----------------------------------------------------------------------*
-CLASS lcl_object_intf DEFINITION FINAL INHERITING FROM lcl_objects_program.
-  PUBLIC SECTION.
-    INTERFACES lif_object.
-    ALIASES mo_files FOR lif_object~mo_files.
-    METHODS constructor
-      IMPORTING
-        is_item     TYPE ty_item
-        iv_language TYPE spras.
-  PROTECTED SECTION.
-    METHODS deserialize_abap
-      IMPORTING io_xml     TYPE REF TO lcl_xml_input
-                iv_package TYPE devclass
-      RAISING   lcx_exception.
-
-    METHODS deserialize_docu
-      IMPORTING io_xml TYPE REF TO lcl_xml_input
-      RAISING   lcx_exception.
-
-  PRIVATE SECTION.
-    DATA mo_object_oriented_object_fct TYPE REF TO lif_object_oriented_object_fnc.
-
-    METHODS serialize_xml
-      IMPORTING io_xml TYPE REF TO lcl_xml_output
-      RAISING   lcx_exception.
-ENDCLASS.                    "lcl_object_intf DEFINITION
-CLASS lcl_object_intf IMPLEMENTATION.
-  METHOD constructor.
-    super->constructor(
-      is_item     = is_item
-      iv_language = iv_language ).
-    mo_object_oriented_object_fct = lcl_object_oriented_factory=>make( iv_object_type = ms_item-obj_type ).
-  ENDMETHOD.
-  METHOD lif_object~deserialize.
-    deserialize_abap( io_xml     = io_xml
-                      iv_package = iv_package ).
-
-    deserialize_docu( io_xml ).
-  ENDMETHOD.
-  METHOD deserialize_abap.
-    DATA: ls_vseointerf   TYPE vseointerf,
-          lt_source       TYPE seop_source_string,
-          lt_descriptions TYPE ty_seocompotx_tt,
-          ls_clskey       TYPE seoclskey.
-    ls_clskey-clsname = ms_item-obj_name.
-
-    lt_source = mo_files->read_abap( ).
-
-    io_xml->read( EXPORTING iv_name = 'VSEOINTERF'
-                  CHANGING cg_data = ls_vseointerf ).
-
-    mo_object_oriented_object_fct->create(
-      EXPORTING
-        iv_package    = iv_package
-      CHANGING
-        is_properties = ls_vseointerf ).
-
-    mo_object_oriented_object_fct->deserialize_source(
-      is_key               = ls_clskey
-      it_source            = lt_source ).
-
-    io_xml->read( EXPORTING iv_name = 'DESCRIPTIONS'
-                  CHANGING cg_data = lt_descriptions ).
-
-    mo_object_oriented_object_fct->update_descriptions(
-      is_key          = ls_clskey
-      it_descriptions = lt_descriptions ).
-
-    mo_object_oriented_object_fct->add_to_activation_list( is_item = ms_item ).
-  ENDMETHOD.
-  METHOD deserialize_docu.
-
-    DATA: lt_lines  TYPE tlinetab,
-          lv_object TYPE dokhl-object.
-
-    io_xml->read( EXPORTING iv_name = 'LINES'
-                  CHANGING cg_data = lt_lines ).
-
-    IF lt_lines[] IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    lv_object = ms_item-obj_name.
-
-    mo_object_oriented_object_fct->create_documentation(
-      it_lines       = lt_lines
-      iv_object_name = lv_object
-      iv_language    = mv_language ).
-  ENDMETHOD.
-  METHOD lif_object~has_changed_since.
-    DATA:
-      lv_program  TYPE program,
-      lt_includes TYPE seoincl_t.
-
-    lt_includes = mo_object_oriented_object_fct->get_includes( ms_item-obj_name ).
-    READ TABLE lt_includes INDEX 1 INTO lv_program.
-    "lv_program = cl_oo_classname_service=>get_interfacepool_name( lv_clsname ).
-    rv_changed = check_prog_changed_since(
-      iv_program   = lv_program
-      iv_timestamp = iv_timestamp
-      iv_skip_gui  = abap_true ).
-  ENDMETHOD.
-
-  METHOD lif_object~serialize.
-
-    DATA: lt_source        TYPE seop_source_string,
-          ls_interface_key TYPE seoclskey.
-
-    ls_interface_key-clsname = ms_item-obj_name.
-
-    IF lif_object~exists( ) = abap_false.
-      RETURN.
-    ENDIF.
-
-    CALL FUNCTION 'SEO_BUFFER_REFRESH'
-      EXPORTING
-        version = seoc_version_active
-        force   = seox_true.
-    CALL FUNCTION 'SEO_BUFFER_REFRESH'
-      EXPORTING
-        version = seoc_version_inactive
-        force   = seox_true.
-
-    lt_source = mo_object_oriented_object_fct->serialize_abap( ls_interface_key ).
-
-    mo_files->add_abap( lt_source ).
-
-    serialize_xml( io_xml ).
-  ENDMETHOD.
-
-  METHOD serialize_xml.
-    DATA:
-      lt_tpool        TYPE textpool_table,
-      lv_object       TYPE dokhl-object,
-      lv_state        TYPE dokhl-dokstate,
-      lt_descriptions TYPE ty_seocompotx_tt,
-      ls_vseointerf   TYPE vseointerf,
-      ls_clskey       TYPE seoclskey,
-      lt_sotr         TYPE ty_sotr_tt,
-      lt_lines        TYPE tlinetab.
-
-
-    ls_clskey-clsname = ms_item-obj_name.
-
-    ls_vseointerf = mo_object_oriented_object_fct->get_interface_properties( is_interface_key = ls_clskey ).
-
-    CLEAR: ls_vseointerf-uuid,
-           ls_vseointerf-author,
-           ls_vseointerf-createdon,
-           ls_vseointerf-changedby,
-           ls_vseointerf-changedon,
-           ls_vseointerf-r3release.
-
-    io_xml->add( iv_name = 'VSEOINTERF'
-                 ig_data = ls_vseointerf ).
-
-    lt_lines = mo_object_oriented_object_fct->read_documentation(
-      iv_class_name = ls_clskey-clsname
-      iv_language   = mv_language ).
-    IF lines( lt_lines ) > 0.
-      io_xml->add( iv_name = 'LINES'
-                   ig_data = lt_lines ).
-    ENDIF.
-
-    lt_descriptions = mo_object_oriented_object_fct->read_descriptions( ls_clskey-clsname ).
-    IF lines( lt_descriptions ) > 0.
-      io_xml->add( iv_name = 'DESCRIPTIONS'
-                   ig_data = lt_descriptions ).
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD lif_object~changed_by.
-    TYPES: BEGIN OF ty_includes,
-             programm TYPE programm,
-           END OF ty_includes.
-
-    TYPES: BEGIN OF ty_reposrc,
-             unam  TYPE reposrc-unam,
-             udat  TYPE reposrc-udat,
-             utime TYPE reposrc-utime,
-           END OF ty_reposrc.
-
-    DATA: lt_reposrc  TYPE STANDARD TABLE OF ty_reposrc,
-          ls_reposrc  LIKE LINE OF lt_reposrc,
-          lt_includes TYPE STANDARD TABLE OF ty_includes.
-
-    lt_includes = mo_object_oriented_object_fct->get_includes( ms_item-obj_name ).
-    ASSERT lines( lt_includes ) > 0.
-
-    SELECT unam udat utime FROM reposrc
-      INTO TABLE lt_reposrc
-      FOR ALL ENTRIES IN lt_includes
-      WHERE progname = lt_includes-programm
-      AND   r3state = 'A'.
-    IF sy-subrc <> 0.
-      rv_user = c_user_unknown.
-    ELSE.
-      SORT lt_reposrc BY udat DESCENDING utime DESCENDING.
-      READ TABLE lt_reposrc INDEX 1 INTO ls_reposrc.
-      ASSERT sy-subrc = 0.
-      rv_user = ls_reposrc-unam.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD lif_object~compare_to_remote_version.
-    CREATE OBJECT ro_comparison_result TYPE lcl_null_comparison_result.
-  ENDMETHOD.
-
-  METHOD lif_object~delete.
-    DATA: ls_clskey TYPE seoclskey.
-    ls_clskey-clsname = ms_item-obj_name.
-
-    mo_object_oriented_object_fct->delete( ls_clskey ).
-  ENDMETHOD.
-
-  METHOD lif_object~exists.
-    DATA: ls_class_key TYPE seoclskey.
-    ls_class_key-clsname = ms_item-obj_name.
-
-    rv_bool = mo_object_oriented_object_fct->exists( iv_object_name = ls_class_key ).
-  ENDMETHOD.
-
-  METHOD lif_object~get_metadata.
-    rs_metadata = get_metadata( ).
-  ENDMETHOD.
-
-  METHOD lif_object~jump.
-    CALL FUNCTION 'RS_TOOL_ACCESS'
-      EXPORTING
-        operation     = 'SHOW'
-        object_name   = ms_item-obj_name
-        object_type   = 'INTF'
-        in_new_window = abap_true.
-  ENDMETHOD.
-
-ENDCLASS.
-
-
-
-CLASS lcl_object_oriented_interface DEFINITION
-  INHERITING FROM lcl_object_oriented_base.
-  PUBLIC SECTION.
-    METHODS:
-      lif_object_oriented_object_fnc~create REDEFINITION,
-      lif_object_oriented_object_fnc~get_includes REDEFINITION,
-      lif_object_oriented_object_fnc~get_interface_properties REDEFINITION,
-      lif_object_oriented_object_fnc~delete REDEFINITION.
-ENDCLASS.
-
-CLASS lcl_object_oriented_interface IMPLEMENTATION.
-  METHOD lif_object_oriented_object_fnc~create.
-    CALL FUNCTION 'SEO_INTERFACE_CREATE_COMPLETE'
-      EXPORTING
-        devclass        = iv_package
-        overwrite       = iv_overwrite
-      CHANGING
-        interface       = is_properties
-      EXCEPTIONS
-        existing        = 1
-        is_class        = 2
-        db_error        = 3
-        component_error = 4
-        no_access       = 5
-        other           = 6
-        OTHERS          = 7.
-    IF sy-subrc <> 0.
-      lcx_exception=>raise( 'Error from SEO_INTERFACE_CREATE_COMPLETE' ).
-    ENDIF.
-  ENDMETHOD.
-  METHOD lif_object_oriented_object_fnc~get_includes.
-    DATA lv_interface_name TYPE seoclsname.
-    lv_interface_name = iv_object_name.
-    APPEND cl_oo_classname_service=>get_interfacepool_name( lv_interface_name ) TO rt_includes.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~get_interface_properties.
-    CALL FUNCTION 'SEO_CLIF_GET'
-      EXPORTING
-        cifkey       = is_interface_key
-        version      = seoc_version_active
-      IMPORTING
-        interface    = rs_interface_properties
-      EXCEPTIONS
-        not_existing = 1
-        deleted      = 2
-        model_only   = 3
-        OTHERS       = 4.
-    IF sy-subrc = 1.
-      RETURN. " in case only inactive version exists
-    ELSEIF sy-subrc <> 0.
-      lcx_exception=>raise( 'error from seo_clif_get' ).
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~delete.
-    CALL FUNCTION 'SEO_INTERFACE_DELETE_COMPLETE'
-      EXPORTING
-        intkey       = is_deletion_key
-      EXCEPTIONS
-        not_existing = 1
-        is_class     = 2
-        db_error     = 3
-        no_access    = 4
-        other        = 5
-        OTHERS       = 6.
-    IF sy-subrc <> 0.
-      lcx_exception=>raise( 'Error from SEO_INTERFACE_DELETE_COMPLETE' ).
-    ENDIF.
-  ENDMETHOD.
-ENDCLASS.
-
-
-****************************************************
 * abapmerge - ZABAPGIT_OBJECT_MSAG
 ****************************************************
 *&---------------------------------------------------------------------*
@@ -20954,19 +19772,12 @@ CLASS lcl_object_pinf IMPLEMENTATION.
 
   METHOD lif_object~exists.
 
-    DATA: lv_pack_name TYPE intf-pack_name,
-          lv_main_pack TYPE tdevc-mainpack.
+    DATA: lv_intf_name TYPE intf-intf_name.
 
 
-    SELECT SINGLE pack_name FROM intf INTO lv_pack_name
+    SELECT SINGLE intf_name FROM intf INTO lv_intf_name
       WHERE intf_name = ms_item-obj_name.
     rv_bool = boolc( sy-subrc = 0 ).
-
-    IF rv_bool = abap_true.
-      SELECT SINGLE mainpack FROM tdevc INTO lv_main_pack
-        WHERE devclass = lv_pack_name.
-      rv_bool = boolc( sy-subrc = 0 ).
-    ENDIF.
 
   ENDMETHOD.                    "lif_object~exists
 
@@ -25011,18 +23822,7 @@ CLASS lcl_object_tobj IMPLEMENTATION.
   ENDMETHOD.  "lif_object~has_changed_since
 
   METHOD lif_object~changed_by.
-
-    DATA: lv_type_pos TYPE i.
-
-    lv_type_pos = strlen( ms_item-obj_name ) - 1.
-
-    SELECT SINGLE luser FROM objh INTO rv_user
-      WHERE objectname = ms_item-obj_name(lv_type_pos)
-      AND objecttype = ms_item-obj_name+lv_type_pos.    "#EC CI_GENBUFF
-    IF sy-subrc <> 0.
-      rv_user = c_user_unknown.
-    ENDIF.
-
+    rv_user = c_user_unknown. " todo
   ENDMETHOD.
 
   METHOD lif_object~get_metadata.
@@ -28629,40 +27429,6 @@ CLASS lcl_object_xslt IMPLEMENTATION.
 ENDCLASS.                    "lcl_object_xslt IMPLEMENTATION
 
 
-****************************************************
-* abapmerge - ZABAPGIT_OBJECT_OO_FACTORY
-****************************************************
-*&---------------------------------------------------------------------*
-*&  Include  zabapgit_object_oo_factory
-*&---------------------------------------------------------------------*
-CLASS lcl_object_oriented_factory IMPLEMENTATION.
-  METHOD make.
-    IF go_object_oriented_object IS BOUND.
-      ro_object_oriented_object = go_object_oriented_object.
-      RETURN.
-    ENDIF.
-    IF iv_object_type = 'CLAS'.
-      CREATE OBJECT ro_object_oriented_object TYPE lcl_object_oriented_class.
-    ELSEIF iv_object_type = 'INTF'.
-      CREATE OBJECT ro_object_oriented_object TYPE lcl_object_oriented_interface.
-    ENDIF.
-  ENDMETHOD.
-ENDCLASS.
-
-CLASS lth_oo_factory_injector DEFINITION FOR TESTING.
-  PUBLIC SECTION.
-    CLASS-METHODS:
-      inject
-        IMPORTING
-          io_object_oriented_object TYPE REF TO lif_object_oriented_object_fnc.
-ENDCLASS.
-CLASS lth_oo_factory_injector IMPLEMENTATION.
-  METHOD inject.
-    lcl_object_oriented_factory=>go_object_oriented_object = io_object_oriented_object.
-  ENDMETHOD.
-ENDCLASS.
-
-
 
 
 
@@ -29976,19 +28742,19 @@ CLASS lcl_transport IMPLEMENTATION.
     ENDWHILE.
 
     CALL FUNCTION 'TRINT_SELECT_REQUESTS'
-      EXPORTING
-        iv_username_pattern    = sy-uname
-        iv_via_selscreen       = 'X'
-        iv_complete_projects   = ''
-*       is_popup               =
-        iv_title               = 'abapGit: Transport Request Selection'
-      IMPORTING
-        et_requests            = rt_trkorr
-      CHANGING
-        cs_ranges              = ls_ranges
-      EXCEPTIONS
-        action_aborted_by_user = 1
-        OTHERS                 = 2.
+     EXPORTING
+       iv_username_pattern          = sy-uname
+       iv_via_selscreen             = 'X'
+       iv_complete_projects         = ''
+*       is_popup                     =
+       iv_title                     = 'abapGit: Transport Request Selection'
+     IMPORTING
+       et_requests                  = rt_trkorr
+     CHANGING
+       cs_ranges                    = ls_ranges
+     EXCEPTIONS
+       action_aborted_by_user       = 1
+       OTHERS                       = 2.
     IF sy-subrc <> 0.
       RETURN.
     ENDIF.
@@ -31107,8 +29873,6 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '.grey             { color: lightgrey  !important; }'.
         _inline '.darkgrey         { color: #808080    !important; }'.
         _inline '.attention        { color: red        !important; }'.
-        _inline '.error            { color: #d41919    !important; }'.
-        _inline '.warning          { color: #e4ae0d    !important; }'.
         _inline '.blue             { color: #5e8dc9    !important; }'.
         _inline '.red              { color: red        !important; }'.
         _inline ''.
@@ -31176,19 +29940,6 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '  color: #bbb;'.
         _inline '  padding-left: 0.4em;'.
         _inline '}'.
-        _inline ''.
-        _inline '/* ERROR LOG */'.
-        _inline ''.
-        _inline 'div.log {'.
-        _inline '  padding: 6px;'.
-        _inline '  margin: 4px;'.
-        _inline '  background-color: #fee6e6;'.
-        _inline '  border: 1px #fdcece solid;'.
-        _inline '  border-radius: 4px;'.
-        _inline '}'.
-        _inline ''.
-        _inline 'div.log > span   { display:block; }'.
-        _inline 'div.log .octicon { padding-right: 6px; }'.
         _inline ''.
         _inline '/* MENU */'.
         _inline 'div.menu           { display: inline; }'.
@@ -31622,16 +30373,15 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '  overflow: visible;'.
         _inline '}'.
         _inline ''.
+        _inline 'table.diff_tab .code span.keyword { color: #0a69ce; }'.
+        _inline 'table.diff_tab .code span.text    { color: #48ce4f; }'.
+        _inline 'table.diff_tab .code span.comment { color: #808080; font-style: italic; }'.
+        _inline 'table.diff_tab .code span.xml_tag { color: #457ce3; }'.
+        _inline 'table.diff_tab .code span.attr    { color: #b777fb; }'.
+        _inline 'table.diff_tab .code span.attr_val { color: #7a02f9; }'.
+        _inline ''.
         _inline 'table.diff_tab tbody tr:first-child td { padding-top: 0.5em; }'.
         _inline 'table.diff_tab tbody tr:last-child td { padding-bottom: 0.5em; }'.
-        _inline ''.
-        _inline '/* STYLES for Syntax Highlighting */'.
-        _inline '.syntax-hl span.keyword  { color: #0a69ce; }'.
-        _inline '.syntax-hl span.text     { color: #48ce4f; }'.
-        _inline '.syntax-hl span.comment  { color: #808080; font-style: italic; }'.
-        _inline '.syntax-hl span.xml_tag  { color: #457ce3; }'.
-        _inline '.syntax-hl span.attr     { color: #b777fb; }'.
-        _inline '.syntax-hl span.attr_val { color: #7a02f9; }'.
         _inline ''.
         _inline '/* DEBUG INFO STYLES */'.
         _inline 'div.debug_container {'.
@@ -31640,17 +30390,15 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '  color: #444;'.
         _inline '  font-family: Consolas, Courier, monospace;'.
         _inline '}'.
-        _inline ''.
         _inline 'div.debug_container p {'.
         _inline '  margin: 0px;'.
         _inline '}'.
         _inline ''.
         _inline '/* DB ENTRIES */'.
         _inline 'div.db_list {'.
-        _inline '  background-color: #fff;'.
+        _inline '  background-color: #f2f2f2;'.
         _inline '  padding: 0.5em;'.
         _inline '}'.
-        _inline ''.
         _inline 'table.db_tab pre {'.
         _inline '  display: inline-block;'.
         _inline '  overflow: hidden;'.
@@ -31659,11 +30407,10 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '  margin: 0px;'.
         _inline '  width: 30em;'.
         _inline '}'.
-        _inline ''.
         _inline 'table.db_tab tr.firstrow td { padding-top: 0.5em; }'.
         _inline 'table.db_tab th {'.
-        _inline '  color: #888888;'.
         _inline '  text-align: left;'.
+        _inline '  color: #888;'.
         _inline '  padding: 0.5em;'.
         _inline '  border-bottom: 1px #ddd solid;'.
         _inline '}'.
@@ -31677,34 +30424,24 @@ CLASS lcl_gui_asset_manager IMPLEMENTATION.
         _inline '  font-style: italic;'.
         _inline '}'.
         _inline ''.
-        _inline 'table.db_tab tbody tr:hover, tr:active {'.
-        _inline '  background-color: #f4f4f4;'.
-        _inline '}'.
-        _inline ''.
         _inline '/* DB ENTRY DISPLAY */'.
         _inline 'div.db_entry {'.
         _inline '  background-color: #f2f2f2;'.
         _inline '  padding: 0.5em;'.
         _inline '}'.
-        _inline ''.
         _inline 'div.db_entry pre {'.
         _inline '  display: block;'.
-        _inline '  font-size: 10pt;'.
         _inline '  overflow: hidden;'.
         _inline '  word-wrap:break-word;'.
         _inline '  white-space: pre-wrap;'.
-        _inline '  background-color: #fcfcfc;'.
-        _inline '  border: 1px #eaeaea solid;'.
-        _inline '  border-radius: 3px;'.
+        _inline '  background-color: #eaeaea;'.
         _inline '  padding: 0.5em;'.
         _inline '  margin: 0.5em 0em;'.
-        _inline '  width: 60em;'.
+        _inline '  width: 50em;'.
         _inline '}'.
-        _inline ''.
         _inline 'div.db_entry table.toolbar {'.
         _inline '  width: 50em;'.
         _inline '}'.
-        _inline ''.
         _inline 'table.tag {'.
         _inline '  display: inline-block;'.
         _inline '  border: 1px #b3c1cc solid;'.
@@ -34469,7 +33206,7 @@ CLASS lcl_gui_view_repo_content IMPLEMENTATION.
 
         lo_log = lo_browser->get_log( ).
         IF mo_repo->is_offline( ) = abap_false AND lo_log->count( ) > 0.
-          ro_html->add( '<div class="log">' ).
+          ro_html->add( '<div class="log attention">' ).
           ro_html->add( lo_log->to_html( ) ). " shows eg. list of unsupported objects
           ro_html->add( '</div>' ).
         ENDIF.
@@ -34601,10 +33338,6 @@ CLASS lcl_gui_view_repo_content IMPLEMENTATION.
                            iv_act = |{ gc_action-repo_remote_change }?{ lv_key }| ).
       lo_tb_advanced->add( iv_txt = 'Make off-line'
                            iv_act = |{ gc_action-repo_remote_detach }?{ lv_key }| ).
-      IF iv_rstate IS INITIAL AND iv_lstate IS INITIAL.
-        lo_tb_advanced->add( iv_txt = 'Force stage'
-                             iv_act = |{ gc_action-go_stage }?{ lv_key }| ).
-      ENDIF.
     ELSE.
       lo_tb_advanced->add( iv_txt = 'Make on-line'
                            iv_act = |{ gc_action-repo_remote_attach }?{ lv_key }| ).
@@ -34946,24 +33679,12 @@ CLASS lcl_gui_view_tutorial IMPLEMENTATION.
     _add '<h2>abapGit related repositories</h2>'.
     _add '<p><ul>'.
     _add '<li>'.
-    IF lcl_services_abapgit=>is_installed( ) = abap_true.
-      _add 'abapGit installed in package&nbsp;'.
-      _add lcl_services_abapgit=>c_package_abapgit.
-    ELSE.
-      ro_html->add_a( iv_txt = 'install abapGit repo' iv_act = gc_action-abapgit_install ).
-      _add ' - To keep abapGit up-to-date (or also to contribute) you need to'.
-      _add 'install it as a repository.'.
-    ENDIF.
-    _add '</li>'.
+    ro_html->add_a( iv_txt = 'install abapGit repo' iv_act = gc_action-abapgit_install ).
+    _add ' - To keep abapGit up-to-date (or also to contribute) you need to'.
+    _add 'install it as a repository.</li>'.
     _add '<li>'.
-    IF lcl_services_abapgit=>is_installed_pi( ) = abap_true.
-      _add 'abapGit plugins installed in package&nbsp;'.
-      _add lcl_services_abapgit=>c_package_plugins.
-    ELSE.
-      ro_html->add_a( iv_txt = 'install abapGit plugins' iv_act = gc_action-abapgit_install_pi ).
-      _add ' - you can also install plugins to extend supported object types'.
-    ENDIF.
-    _add '</li>'.
+    ro_html->add_a( iv_txt = 'install abapGit plugins' iv_act = gc_action-abapgit_install_pi ).
+    _add ' - you can also install plugins to extend supported object types</li>'.
     _add '</ul></p>'.
 
   ENDMETHOD. " render_content.
@@ -36572,11 +35293,9 @@ CLASS lcl_gui_page_db_display IMPLEMENTATION.
 
   METHOD render_content.
 
-    DATA:
-      lo_highlighter  TYPE REF TO lcl_syntax_highlighter,
-      lv_data         TYPE lcl_persistence_db=>ty_content-data_str,
-      ls_action       TYPE lcl_persistence_db=>ty_content,
-      lv_action       TYPE string.
+    DATA: lv_data   TYPE lcl_persistence_db=>ty_content-data_str,
+          ls_action TYPE lcl_persistence_db=>ty_content,
+          lv_action TYPE string.
 
     TRY.
         lv_data = lcl_app=>db( )->read(
@@ -36585,13 +35304,13 @@ CLASS lcl_gui_page_db_display IMPLEMENTATION.
       CATCH lcx_not_found ##NO_HANDLER.
     ENDTRY.
 
-    " Create syntax highlighter
-    lo_highlighter  = lcl_syntax_highlighter=>create( '*.xml' ).
-
     ls_action-type  = ms_key-type.
     ls_action-value = ms_key-value.
     lv_action       = lcl_html_action_utils=>dbkey_encode( ls_action ).
-    lv_data         = lo_highlighter->process_line( lcl_xml_pretty=>print( lv_data ) ).
+
+    lv_data         = lcl_xml_pretty=>print( lv_data ).
+    lv_data         = escape( val    = lv_data
+                              format = cl_abap_format=>e_html_attr ).
 
     CREATE OBJECT ro_html.
 
@@ -36607,7 +35326,7 @@ CLASS lcl_gui_page_db_display IMPLEMENTATION.
     ro_html->add_a( iv_txt = 'Edit' iv_act = |{ gc_action-db_edit }?{ lv_action }| ).
     ro_html->add( '</td></tr></table>' ).
 
-    ro_html->add( |<pre class="syntax-hl">{ lv_data }</pre>| ).
+    ro_html->add( |<pre>{ lv_data }</pre>| ).
     ro_html->add( '</div>' ).
 
   ENDMETHOD.  "render_content
@@ -36652,7 +35371,9 @@ CLASS lcl_gui_page_db_edit IMPLEMENTATION.
       iv_type  = ms_key-type
       iv_value = ms_key-value ).
 
-    lv_data = escape( val    = lcl_xml_pretty=>print( lv_data )
+    lv_data = lcl_xml_pretty=>print( lv_data ).
+
+    lv_data = escape( val    = lv_data
                       format = cl_abap_format=>e_html_attr ).
 
     CREATE OBJECT ro_html.
@@ -36731,15 +35452,12 @@ CLASS lcl_gui_page_db IMPLEMENTATION.
     ro_html->add( '<table class="db_tab">' ).
 
     " Header
-    ro_html->add( '<thead>' ).
     ro_html->add( '<tr>' ).
     ro_html->add( '<th>Type</th>' ).
     ro_html->add( '<th>Key</th>' ).
     ro_html->add( '<th>Data</th>' ).
     ro_html->add( '<th></th>' ).
     ro_html->add( '</tr>' ).
-    ro_html->add( '</thead>' ).
-    ro_html->add( '<tbody>' ).
 
     " Lines
     LOOP AT lt_data ASSIGNING <ls_data>.
@@ -36765,7 +35483,6 @@ CLASS lcl_gui_page_db IMPLEMENTATION.
       ro_html->add( '</tr>' ).
     ENDLOOP.
 
-    ro_html->add( '</tbody>' ).
     ro_html->add( '</table>' ).
     ro_html->add( '</div>' ).
 
@@ -37065,7 +35782,7 @@ CLASS lcl_gui_page_diff IMPLEMENTATION.
 
     " Content
     ro_html->add( '<div class="diff_content">' ).           "#EC NOTEXT
-    ro_html->add( '<table class="diff_tab syntax-hl">' ).   "#EC NOTEXT
+    ro_html->add( '<table class="diff_tab">' ).             "#EC NOTEXT
     ro_html->add( render_table_head( ) ).
     ro_html->add( render_lines( is_diff ) ).
     ro_html->add( '</table>' ).                             "#EC NOTEXT
@@ -37688,8 +36405,7 @@ CLASS lcl_gui_page_stage DEFINITION FINAL INHERITING FROM lcl_gui_page.
 
     METHODS:
       constructor
-        IMPORTING
-          io_repo         TYPE REF TO lcl_repo_online
+        IMPORTING io_repo TYPE REF TO lcl_repo_online
         RAISING   lcx_exception,
       lif_gui_page~on_event REDEFINITION.
 
@@ -37712,10 +36428,7 @@ CLASS lcl_gui_page_stage DEFINITION FINAL INHERITING FROM lcl_gui_page.
                   iv_context     TYPE string
         RETURNING VALUE(ro_html) TYPE REF TO lcl_html,
       render_menu
-        RETURNING VALUE(ro_html) TYPE REF TO lcl_html,
-      read_last_changed_by
-        IMPORTING is_file        TYPE ty_file
-        RETURNING VALUE(rv_user) TYPE xubname.
+        RETURNING VALUE(ro_html) TYPE REF TO lcl_html.
 
     METHODS process_stage_list
       IMPORTING it_postdata TYPE cnht_post_data_tab
@@ -37745,6 +36458,7 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
   METHOD lif_gui_page~on_event.
 
     FIELD-SYMBOLS: <ls_file> LIKE LINE OF ms_files-local.
+
 
     CASE iv_action.
       WHEN c_action-stage_all.
@@ -37791,6 +36505,7 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
       lcl_path=>split_file_location( EXPORTING iv_fullpath = <ls_item>-name
                                      IMPORTING ev_path     = ls_file-path
                                                ev_filename = ls_file-filename ).
+
       CASE <ls_item>-value.
         WHEN lcl_stage=>c_method-add.
           READ TABLE ms_files-local ASSIGNING <ls_file>
@@ -37820,6 +36535,7 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
     FIELD-SYMBOLS: <ls_remote> LIKE LINE OF ms_files-remote,
                    <ls_local>  LIKE LINE OF ms_files-local.
 
+
     CREATE OBJECT ro_html.
 
     ro_html->add( '<table id="stage_tab" class="stage_tab">' ).
@@ -37835,7 +36551,6 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
                           iv_act = |{ gc_action-go_diff }?key={ mo_repo->get_key( ) }| ).
         ENDIF.
         ro_html->add('</th>').
-        ro_html->add('<th>Last changed by</th>').
         ro_html->add('</tr></thead>').
         ro_html->add('<tbody class="local">').
       ENDAT.
@@ -37869,8 +36584,7 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
 
   METHOD render_file.
 
-    DATA: lv_param TYPE string,
-          lv_user  TYPE xubname.
+    DATA lv_param TYPE string.
 
     CREATE OBJECT ro_html.
 
@@ -37886,9 +36600,6 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
         ro_html->add( '<td>' ).
         ro_html->add_a( iv_txt = 'diff' iv_act = |{ gc_action-go_diff }?{ lv_param }| ).
         ro_html->add( '</td>' ).
-
-        lv_user = read_last_changed_by( is_file ).
-        ro_html->add( |<td>{ lv_user }</td> | ).
       WHEN 'remote'.
         ro_html->add( '<td class="cmd"><a>ignore</a><a>remove</a></td>' ).
         ro_html->add( |<td><span class="grey">-</span></td>| ).
@@ -37945,20 +36656,6 @@ CLASS lcl_gui_page_stage IMPLEMENTATION.
 
   ENDMETHOD.  "scripts
 
-  METHOD read_last_changed_by.
-    DATA: ls_local_file TYPE ty_file_item,
-          lt_files_local type ty_files_item_tt.
-    TRY.
-        lt_files_local = mo_repo->get_files_local( ).
-        READ TABLE lt_files_local INTO ls_local_file WITH KEY file = is_file.
-        IF sy-subrc = 0.
-          rv_user = lcl_objects=>changed_by( ls_local_file-item ).
-        ENDIF.
-      CATCH lcx_exception.
-        CLEAR rv_user. "Should not raise errors if user last changed by was not found
-    ENDTRY.
-  ENDMETHOD.
-
 ENDCLASS.
 
 
@@ -37980,8 +36677,7 @@ CLASS lcl_gui_page_debuginfo DEFINITION FINAL INHERITING FROM lcl_gui_page.
 
   PRIVATE SECTION.
     METHODS render_debug_info
-      RETURNING VALUE(ro_html) TYPE REF TO lcl_html
-      RAISING lcx_exception.
+      RETURNING VALUE(ro_html) TYPE REF TO lcl_html.
     METHODS render_supported_object_types
       RETURNING VALUE(rv_html) TYPE string.
 
@@ -38025,8 +36721,6 @@ CLASS lcl_gui_page_debuginfo IMPLEMENTATION.
     ro_html->add( |<p>abapGit version: { gc_abap_version }</p>| ).
     ro_html->add( |<p>XML version:     { gc_xml_version }</p>| ).
     ro_html->add( |<p>GUI version:     { lv_gui_version }</p>| ).
-    ro_html->add( |<p>LCL_TIME:        { lcl_time=>get( ) }</p>| ).
-    ro_html->add( |<p>SY time:         { sy-datum } { sy-uzeit } { sy-tzone }</p>| ).
 
   ENDMETHOD. "render_debug_info
 
@@ -38063,8 +36757,7 @@ CLASS lcl_gui_page_debuginfo IMPLEMENTATION.
 
     CREATE OBJECT ro_html.
 
-    ro_html->add( 'debugOutput("Browser: " + navigator.userAgent + ' &&
-      '"<br>Frontend time: " + new Date(), "debug_info");' ).
+    ro_html->add( 'debugOutput("Browser: " + navigator.userAgent, "debug_info");' ).
 
   ENDMETHOD.  "scripts
 
@@ -38355,8 +37048,8 @@ CLASS lcl_gui_router DEFINITION FINAL.
       RAISING   lcx_exception.
 
     METHODS get_page_stage
-      IMPORTING iv_key          TYPE lcl_persistence_repo=>ty_repo-key
-      RETURNING VALUE(ri_page)  TYPE REF TO lif_gui_page
+      IMPORTING iv_key         TYPE lcl_persistence_repo=>ty_repo-key
+      RETURNING VALUE(ri_page) TYPE REF TO lif_gui_page
       RAISING   lcx_exception.
 
     METHODS get_page_db_by_name
@@ -38630,7 +37323,7 @@ CLASS lcl_gui_router IMPLEMENTATION.
 
     CREATE OBJECT lo_stage_page
       EXPORTING
-        io_repo         = lo_repo.
+        io_repo = lo_repo.
 
     ri_page = lo_stage_page.
 
@@ -41326,7 +40019,7 @@ ENDCLASS.
 
 CLASS ltd_spy_oo_object DEFINITION FOR TESTING.
   PUBLIC SECTION.
-    INTERFACES: lif_object_oriented_object_fnc.
+    INTERFACES: lif_object_oriented_object.
     DATA:
       mv_package               TYPE devclass,
       mv_overwrite             TYPE seox_boolean,
@@ -41351,18 +40044,10 @@ CLASS ltd_spy_oo_object DEFINITION FOR TESTING.
       mv_docu_object_name      TYPE dokhl-object,
       mv_docu_language         TYPE spras,
       mt_docu_lines            TYPE tlinetab,
-      mv_get_includes_called   TYPE abap_bool,
-      mv_exists                TYPE abap_bool,
-      mv_exists_called         TYPE abap_bool,
-      ms_serialize_key         TYPE seoclskey,
-      ms_delete_key            TYPE seoclskey,
-      mv_skip_test_classes     TYPE abap_bool.
-  PRIVATE SECTION.
-
-
+      mv_get_includes_called   TYPE abap_bool.
 ENDCLASS.
 CLASS ltd_spy_oo_object IMPLEMENTATION.
-  METHOD lif_object_oriented_object_fnc~create.
+  METHOD lif_object_oriented_object~create.
     DATA lv_properties_structure_name TYPE string.
     lv_properties_structure_name = cl_abap_typedescr=>describe_by_data( is_properties )->absolute_name.
     IF lv_properties_structure_name = cl_abap_typedescr=>describe_by_data( ms_interface_properties )->absolute_name.
@@ -41373,7 +40058,7 @@ CLASS ltd_spy_oo_object IMPLEMENTATION.
     mv_package                = iv_package.
     mv_overwrite              = iv_overwrite.
   ENDMETHOD.
-  METHOD lif_object_oriented_object_fnc~generate_locals.
+  METHOD lif_object_oriented_object~generate_locals.
     ms_locals_key            = is_key.
     mt_local_definitions     = it_local_definitions.
     mt_local_implementations = it_local_implementations.
@@ -41382,96 +40067,43 @@ CLASS ltd_spy_oo_object IMPLEMENTATION.
     mv_force                 = iv_force.
   ENDMETHOD.
 
-  METHOD lif_object_oriented_object_fnc~deserialize_source.
+  METHOD lif_object_oriented_object~deserialize_source.
     ms_deserialize_key = is_key.
     mt_source          = it_source.
   ENDMETHOD.
 
-  METHOD lif_object_oriented_object_fnc~add_to_activation_list.
+  METHOD lif_object_oriented_object~add_to_activation_list.
     ms_item_to_activate = is_item.
   ENDMETHOD.
 
-  METHOD lif_object_oriented_object_fnc~update_descriptions.
+  METHOD lif_object_oriented_object~update_descriptions.
     ms_description_key = is_key.
     mt_descriptions    = it_descriptions.
   ENDMETHOD.
 
-  METHOD lif_object_oriented_object_fnc~insert_text_pool.
-    mv_text_pool_inserted   = abap_true.
+  METHOD lif_object_oriented_object~insert_text_pool.
+    mv_text_pool_inserted = abap_true.
     mv_text_pool_class_name = iv_class_name.
-    mt_text_pool            = it_text_pool.
+    mt_text_pool = it_text_pool.
     cl_abap_unit_assert=>assert_equals(
       act = iv_language
       exp = sy-langu ).
   ENDMETHOD.
 
-  METHOD lif_object_oriented_object_fnc~create_sotr.
+  METHOD lif_object_oriented_object~create_sotr.
     mt_sotr = it_sotr.
     mt_sotr_package = iv_package.
   ENDMETHOD.
 
-  METHOD lif_object_oriented_object_fnc~create_documentation.
+  METHOD lif_object_oriented_object~create_documentation.
     mv_docu_object_name = iv_object_name.
     mv_docu_language    = iv_language.
     mt_docu_lines       = it_lines.
   ENDMETHOD.
 
-  METHOD lif_object_oriented_object_fnc~get_includes.
+  METHOD lif_object_oriented_object~get_includes.
     APPEND 'dummy' TO rt_includes.
     mv_get_includes_called = abap_true.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~exists.
-    mv_exists_called = abap_true.
-    rv_exists = mv_exists.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~serialize_abap.
-    ms_serialize_key = is_class_key.
-    CASE iv_type.
-      WHEN seop_ext_class_locals_def.
-        rt_source = mt_local_definitions.
-      WHEN seop_ext_class_locals_imp.
-        rt_source = mt_local_implementations.
-      WHEN seop_ext_class_macros.
-        rt_source = mt_local_macros.
-      WHEN seop_ext_class_testclasses.
-        rt_source = mt_local_test_classes.
-      WHEN OTHERS.
-        rt_source = mt_source.
-    ENDCASE.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~get_class_properties.
-    rs_class_properties = ms_class_properties.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~get_interface_properties.
-    rs_interface_properties = ms_interface_properties.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~read_text_pool.
-    rt_text_pool = mt_text_pool.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~read_sotr.
-    rt_sotr = mt_sotr.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~read_documentation.
-    rt_lines = mt_docu_lines.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~read_descriptions.
-    rt_descriptions = mt_descriptions.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~get_skip_test_classes.
-    rv_skip = mv_skip_test_classes.
-  ENDMETHOD.
-
-  METHOD lif_object_oriented_object_fnc~delete.
-    ms_delete_key = is_deletion_key.
   ENDMETHOD.
 
 ENDCLASS.
@@ -41480,7 +40112,6 @@ CLASS ltd_fake_object_files DEFINITION FOR TESTING
   INHERITING FROM  lcl_objects_files.
   PUBLIC SECTION.
     METHODS constructor.
-    METHODS add_abap REDEFINITION.
     METHODS read_abap REDEFINITION.
     DATA:
       mt_sources               TYPE seop_source_string,
@@ -41517,32 +40148,18 @@ CLASS ltd_fake_object_files IMPLEMENTATION.
     APPEND 'macro'          TO me->mt_local_macros.
     APPEND 'test'           TO me->mt_local_test_classes.
   ENDMETHOD.
-  METHOD add_abap.
-    CASE iv_extra.
-      WHEN 'locals_def'.
-        mt_local_definitions = it_abap.
-      WHEN 'locals_imp'.
-        mt_local_implementations = it_abap.
-      WHEN 'macros'.
-        mt_local_macros = it_abap.
-      WHEN 'testclasses'.
-        mt_local_test_classes = it_abap.
-      WHEN OTHERS.
-        mt_sources = it_abap.
-        RETURN.
-    ENDCASE.
-  ENDMETHOD.
+
 ENDCLASS.
 
 CLASS ltc_oo_test DEFINITION FOR TESTING RISK LEVEL HARMLESS DURATION SHORT.
   PROTECTED SECTION.
     DATA:
-      mo_spy_oo_object_functions TYPE REF TO ltd_spy_oo_object,
-      mo_fake_object_files       TYPE REF TO ltd_fake_object_files,
-      mo_xml_input               TYPE REF TO lcl_xml_input,
-      mo_xml_out                 TYPE REF TO lcl_xml_output,
-      mo_oo_object               TYPE REF TO lif_object,
-      ms_item                    TYPE ty_item.
+      mo_spy_oo_object     TYPE REF TO ltd_spy_oo_object,
+      mo_fake_object_files TYPE REF TO ltd_fake_object_files,
+      mo_xml_input         TYPE REF TO lcl_xml_input,
+      mo_xml_out           TYPE REF TO lcl_xml_output,
+      mo_oo_object         TYPE REF TO lif_object,
+      ms_item              TYPE ty_item.
     METHODS: when_deserializing
       RAISING
         lcx_exception,
@@ -41563,31 +40180,22 @@ CLASS ltc_oo_test DEFINITION FOR TESTING RISK LEVEL HARMLESS DURATION SHORT.
           lcx_exception,
       then_docu_should_be_created
         IMPORTING
-          it_lines TYPE tlinetab,
-      should_serialize_with_obj_key.
+          it_lines TYPE tlinetab.
 
 ENDCLASS.
 CLASS ltc_oo_test IMPLEMENTATION.
 
-  METHOD should_serialize_with_obj_key.
-
-    cl_abap_unit_assert=>assert_equals(
-      act = me->mo_spy_oo_object_functions->ms_serialize_key
-      exp = ms_item-obj_name ).
-
-  ENDMETHOD.
-
   METHOD then_docu_should_be_created.
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mt_docu_lines
+      act = mo_spy_oo_object->mt_docu_lines
       exp = it_lines ).
 
     cl_abap_unit_assert=>assert_equals(
-       act = mo_spy_oo_object_functions->mv_docu_object_name
+       act = mo_spy_oo_object->mv_docu_object_name
        exp = ms_item-obj_name ).
 
     cl_abap_unit_assert=>assert_equals(
-       act = mo_spy_oo_object_functions->mv_docu_language
+       act = mo_spy_oo_object->mv_docu_language
        exp = sy-langu ).
   ENDMETHOD.
 
@@ -41599,17 +40207,17 @@ CLASS ltc_oo_test IMPLEMENTATION.
 
   METHOD then_it_should_add_activation.
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->ms_item_to_activate
+      act = mo_spy_oo_object->ms_item_to_activate
       exp = ms_item ).
   ENDMETHOD.
 
   METHOD then_shuld_update_descriptions.
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mt_descriptions
+      act = mo_spy_oo_object->mt_descriptions
       exp = it_descriptions ).
 
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->ms_description_key
+      act = mo_spy_oo_object->ms_description_key
       exp = ms_item-obj_name ).
   ENDMETHOD.
 
@@ -41621,11 +40229,11 @@ CLASS ltc_oo_test IMPLEMENTATION.
 
   METHOD then_should_deserialize_source.
     cl_abap_unit_assert=>assert_equals(
-       act = mo_spy_oo_object_functions->mt_source
+       act = mo_spy_oo_object->mt_source
        exp = mo_fake_object_files->mt_sources ).
 
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->ms_deserialize_key
+      act = mo_spy_oo_object->ms_deserialize_key
       exp = ms_item-obj_name ).
   ENDMETHOD.
 
@@ -41665,9 +40273,9 @@ ENDCLASS.
 CLASS ltcl_class_deserialization IMPLEMENTATION.
   METHOD setup.
     CREATE OBJECT mo_fake_object_files.
-    CREATE OBJECT mo_spy_oo_object_functions.
+    CREATE OBJECT mo_spy_oo_object.
     CREATE OBJECT mo_xml_out.
-    lth_oo_factory_injector=>inject( mo_spy_oo_object_functions ).
+    lth_oo_factory_injector=>inject( mo_spy_oo_object ).
 
     ms_item-devclass = 'package_name'.
     ms_item-obj_name = 'zcl_class'.
@@ -41739,40 +40347,40 @@ CLASS ltcl_class_deserialization IMPLEMENTATION.
 
   METHOD then_should_create_class.
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->ms_class_properties
+      act = mo_spy_oo_object->ms_class_properties
       exp = ms_class_properties ).
 
-    cl_abap_unit_assert=>assert_equals( act = mo_spy_oo_object_functions->mv_overwrite
+    cl_abap_unit_assert=>assert_equals( act = mo_spy_oo_object->mv_overwrite
                                         exp = abap_true ).
 
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mv_package
+      act = mo_spy_oo_object->mv_package
       exp = 'package_name' ).
   ENDMETHOD.
 
 
   METHOD then_it_should_generate_locals.
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->ms_locals_key
+      act = mo_spy_oo_object->ms_locals_key
       exp = ms_item-obj_name ).
 
-    cl_abap_unit_assert=>assert_equals( act = mo_spy_oo_object_functions->mv_force
+    cl_abap_unit_assert=>assert_equals( act = mo_spy_oo_object->mv_force
                                         exp = abap_true ).
 
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mt_local_definitions
+      act = mo_spy_oo_object->mt_local_definitions
       exp = mo_fake_object_files->mt_local_definitions  ).
 
     cl_abap_unit_assert=>assert_equals(
-       act = mo_spy_oo_object_functions->mt_local_implementations
+       act = mo_spy_oo_object->mt_local_implementations
        exp = mo_fake_object_files->mt_local_implementations ).
 
     cl_abap_unit_assert=>assert_equals(
-       act = mo_spy_oo_object_functions->mt_local_macros
+       act = mo_spy_oo_object->mt_local_macros
        exp = mo_fake_object_files->mt_local_macros ).
 
     cl_abap_unit_assert=>assert_equals(
-       act = mo_spy_oo_object_functions->mt_local_test_classes
+       act = mo_spy_oo_object->mt_local_test_classes
        exp = mo_fake_object_files->mt_local_test_classes ).
   ENDMETHOD.
   METHOD no_text_pool_no_insert.
@@ -41780,7 +40388,7 @@ CLASS ltcl_class_deserialization IMPLEMENTATION.
 
     when_deserializing( ).
 
-    cl_abap_unit_assert=>assert_equals( act = mo_spy_oo_object_functions->mv_text_pool_inserted
+    cl_abap_unit_assert=>assert_equals( act = mo_spy_oo_object->mv_text_pool_inserted
                                         exp = abap_false ).
   ENDMETHOD.
 
@@ -41800,11 +40408,11 @@ CLASS ltcl_class_deserialization IMPLEMENTATION.
     when_deserializing( ).
 
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mt_text_pool
+      act = mo_spy_oo_object->mt_text_pool
       exp = lt_pool_external ).
 
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mv_text_pool_class_name
+      act = mo_spy_oo_object->mv_text_pool_class_name
       exp = 'zcl_class' ).
   ENDMETHOD.
 
@@ -41824,10 +40432,10 @@ CLASS ltcl_class_deserialization IMPLEMENTATION.
     when_deserializing( ).
 
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mt_sotr
+      act = mo_spy_oo_object->mt_sotr
       exp = lt_sotr ).
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mt_sotr_package
+      act = mo_spy_oo_object->mt_sotr_package
       exp = 'package_name' ).
   ENDMETHOD.
 
@@ -41867,9 +40475,9 @@ ENDCLASS.
 CLASS ltcl_interface_deserialization IMPLEMENTATION.
   METHOD setup.
     CREATE OBJECT mo_fake_object_files.
-    CREATE OBJECT mo_spy_oo_object_functions.
+    CREATE OBJECT mo_spy_oo_object.
     CREATE OBJECT mo_xml_out.
-    lth_oo_factory_injector=>inject( mo_spy_oo_object_functions ).
+    lth_oo_factory_injector=>inject( mo_spy_oo_object ).
 
     ms_item-devclass = 'package_name'.
     ms_item-obj_name = 'zif_interface'.
@@ -41932,14 +40540,14 @@ CLASS ltcl_interface_deserialization IMPLEMENTATION.
 
   METHOD then_should_create_interface.
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->ms_interface_properties
+      act = mo_spy_oo_object->ms_interface_properties
       exp = ms_interface_properties ).
 
-    cl_abap_unit_assert=>assert_equals( act = mo_spy_oo_object_functions->mv_overwrite
+    cl_abap_unit_assert=>assert_equals( act = mo_spy_oo_object->mv_overwrite
                                         exp = abap_true ).
 
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mv_package
+      act = mo_spy_oo_object->mv_package
       exp = 'package_name' ).
   ENDMETHOD.
 
@@ -41971,9 +40579,9 @@ ENDCLASS.
 CLASS ltcl_class_changed IMPLEMENTATION.
   METHOD setup.
     CREATE OBJECT mo_fake_object_files.
-    CREATE OBJECT mo_spy_oo_object_functions.
+    CREATE OBJECT mo_spy_oo_object.
     CREATE OBJECT mo_xml_out.
-    lth_oo_factory_injector=>inject( mo_spy_oo_object_functions ).
+    lth_oo_factory_injector=>inject( mo_spy_oo_object ).
 
     ms_item-devclass = 'package_name'.
     ms_item-obj_name = 'zcl_class'.
@@ -41990,7 +40598,7 @@ CLASS ltcl_class_changed IMPLEMENTATION.
     lv_username = mo_oo_object->changed_by( ).
 
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mv_get_includes_called
+      act = mo_spy_oo_object->mv_get_includes_called
       exp = abap_true ).
 
     cl_abap_unit_assert=>assert_equals(
@@ -42003,7 +40611,7 @@ CLASS ltcl_class_changed IMPLEMENTATION.
     mo_oo_object->has_changed_since( lv_timestamp ).
 
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mv_get_includes_called
+      act = mo_spy_oo_object->mv_get_includes_called
       exp = abap_true ).
   ENDMETHOD.
 ENDCLASS.
@@ -42018,9 +40626,9 @@ ENDCLASS.
 CLASS ltcl_interface_changed IMPLEMENTATION.
   METHOD setup.
     CREATE OBJECT mo_fake_object_files.
-    CREATE OBJECT mo_spy_oo_object_functions.
+    CREATE OBJECT mo_spy_oo_object.
     CREATE OBJECT mo_xml_out.
-    lth_oo_factory_injector=>inject( mo_spy_oo_object_functions ).
+    lth_oo_factory_injector=>inject( mo_spy_oo_object ).
 
     ms_item-devclass = 'package_name'.
     ms_item-obj_name = 'zif_interface'.
@@ -42037,7 +40645,7 @@ CLASS ltcl_interface_changed IMPLEMENTATION.
     lv_username = mo_oo_object->changed_by( ).
 
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mv_get_includes_called
+      act = mo_spy_oo_object->mv_get_includes_called
       exp = abap_true ).
 
     cl_abap_unit_assert=>assert_equals(
@@ -42050,595 +40658,8 @@ CLASS ltcl_interface_changed IMPLEMENTATION.
     mo_oo_object->has_changed_since( lv_timestamp ).
 
     cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mv_get_includes_called
+      act = mo_spy_oo_object->mv_get_includes_called
       exp = abap_true ).
-  ENDMETHOD.
-ENDCLASS.
-
-CLASS ltcl_exists_test DEFINITION FOR TESTING RISK LEVEL HARMLESS DURATION SHORT
-INHERITING FROM ltc_oo_test.
-  PRIVATE SECTION.
-    METHODS:
-      setup,
-      class_exists FOR TESTING RAISING cx_static_check,
-      interface_exists FOR TESTING RAISING cx_static_check.
-ENDCLASS.
-
-CLASS ltcl_exists_test IMPLEMENTATION.
-  METHOD setup.
-    CREATE OBJECT mo_spy_oo_object_functions.
-    me->mo_spy_oo_object_functions->mv_exists = abap_true.
-    lth_oo_factory_injector=>inject( mo_spy_oo_object_functions ).
-  ENDMETHOD.
-
-  METHOD class_exists.
-    ms_item-devclass = 'package_name'.
-    ms_item-obj_name = 'zcl_class'.
-    ms_item-obj_type = 'CLAS'.
-    CREATE OBJECT mo_oo_object TYPE lcl_object_clas
-      EXPORTING
-        is_item     = ms_item
-        iv_language = sy-langu.
-
-    cl_abap_unit_assert=>assert_equals(
-      act = mo_oo_object->exists( )
-      exp = abap_true ).
-    cl_abap_unit_assert=>assert_equals(
-      act = me->mo_spy_oo_object_functions->mv_exists_called
-      exp = abap_true ).
-  ENDMETHOD.
-
-  METHOD interface_exists.
-    ms_item-devclass = 'package_name'.
-    ms_item-obj_name = 'zif_interface'.
-    ms_item-obj_type = 'INTF'.
-
-    CREATE OBJECT mo_oo_object TYPE lcl_object_intf
-      EXPORTING
-        is_item     = ms_item
-        iv_language = sy-langu.
-
-    cl_abap_unit_assert=>assert_equals(
-      act = mo_oo_object->exists( )
-      exp = abap_true ).
-    cl_abap_unit_assert=>assert_equals(
-      act = me->mo_spy_oo_object_functions->mv_exists_called
-      exp = abap_true ).
-  ENDMETHOD.
-ENDCLASS.
-
-CLASS ltcl_serialize_class DEFINITION FOR TESTING RISK LEVEL HARMLESS DURATION SHORT
-INHERITING FROM ltc_oo_test.
-  PRIVATE SECTION.
-    METHODS:
-      setup,
-      teardown,
-      serialize_abap FOR TESTING RAISING cx_static_check,
-      no_existing_no_serialize FOR TESTING RAISING cx_static_check,
-      serialize_local_definitions FOR TESTING RAISING cx_static_check,
-      serialize_local_implementation FOR TESTING RAISING cx_static_check,
-      serialize_local_macros FOR TESTING RAISING cx_static_check,
-      serialize_test_classes FOR TESTING RAISING cx_static_check,
-      serialize_properties_to_xml FOR TESTING RAISING cx_static_check,
-      serialize_skipping_tests_xml FOR TESTING RAISING cx_static_check,
-      serialize_textpool FOR TESTING RAISING cx_static_check,
-      read_sotr_if_exception_class FOR TESTING RAISING cx_static_check,
-      do_not_read_sotr_regular_class FOR TESTING RAISING cx_static_check,
-      should_serialize_documentation FOR TESTING RAISING cx_static_check,
-      should_serialize_descriptions FOR TESTING RAISING cx_static_check.
-ENDCLASS.
-
-CLASS ltcl_serialize_class IMPLEMENTATION.
-
-  METHOD setup.
-    CREATE OBJECT mo_fake_object_files.
-    CREATE OBJECT mo_spy_oo_object_functions.
-    me->mo_spy_oo_object_functions->mv_exists = abap_true.
-    lth_oo_factory_injector=>inject( mo_spy_oo_object_functions ).
-
-    ms_item-devclass = 'package_name'.
-    ms_item-obj_name = 'zcl_class'.
-    ms_item-obj_type = 'CLAS'.
-
-    CREATE OBJECT mo_oo_object TYPE lcl_object_clas
-      EXPORTING
-        is_item     = ms_item
-        iv_language = sy-langu.
-    CREATE OBJECT mo_xml_out.
-    mo_oo_object->mo_files = mo_fake_object_files.
-  ENDMETHOD.
-
-  METHOD serialize_abap.
-    DATA lt_abap_source TYPE ty_string_tt.
-
-    APPEND 'a_source_line' TO  me->mo_spy_oo_object_functions->mt_source.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    should_serialize_with_obj_key( ).
-
-    lt_abap_source = mo_fake_object_files->read_abap( ).
-    cl_abap_unit_assert=>assert_equals(
-      act = lt_abap_source
-      exp = me->mo_spy_oo_object_functions->mt_source ).
-  ENDMETHOD.
-
-  METHOD serialize_local_definitions.
-    DATA lt_abap_source TYPE ty_string_tt.
-
-    APPEND 'a_local_definition' TO  me->mo_spy_oo_object_functions->mt_local_definitions.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    should_serialize_with_obj_key( ).
-
-    lt_abap_source = mo_fake_object_files->read_abap( iv_extra = 'locals_def' iv_error = abap_false ).
-
-    cl_abap_unit_assert=>assert_equals(
-      act = lt_abap_source
-      exp = me->mo_spy_oo_object_functions->mt_local_definitions ).
-  ENDMETHOD.
-
-  METHOD serialize_local_implementation.
-    DATA lt_abap_source TYPE ty_string_tt.
-
-    APPEND 'a_local_implementation' TO  me->mo_spy_oo_object_functions->mt_local_implementations.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    should_serialize_with_obj_key( ).
-
-    lt_abap_source = mo_fake_object_files->read_abap( iv_extra = 'locals_imp' iv_error = abap_false ).
-
-    cl_abap_unit_assert=>assert_equals(
-      act = lt_abap_source
-      exp = me->mo_spy_oo_object_functions->mt_local_implementations ).
-  ENDMETHOD.
-
-  METHOD serialize_local_macros.
-    DATA lt_abap_source TYPE ty_string_tt.
-    APPEND 'a_local_macro' TO  me->mo_spy_oo_object_functions->mt_local_macros.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    should_serialize_with_obj_key( ).
-
-    lt_abap_source = mo_fake_object_files->read_abap( iv_extra = 'macros' iv_error = abap_false ).
-
-    cl_abap_unit_assert=>assert_equals(
-      act = lt_abap_source
-      exp = me->mo_spy_oo_object_functions->mt_local_macros ).
-  ENDMETHOD.
-
-  METHOD serialize_test_classes.
-    DATA lt_abap_source TYPE ty_string_tt.
-    APPEND 'a_local_test' TO  me->mo_spy_oo_object_functions->mt_local_test_classes.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    should_serialize_with_obj_key( ).
-
-    lt_abap_source = mo_fake_object_files->read_abap( iv_extra = 'testclasses' iv_error = abap_false ).
-
-    cl_abap_unit_assert=>assert_equals(
-      act = lt_abap_source
-      exp = me->mo_spy_oo_object_functions->mt_local_test_classes ).
-  ENDMETHOD.
-
-  METHOD no_existing_no_serialize.
-    me->mo_spy_oo_object_functions->mv_exists = abap_false.
-    mo_oo_object->serialize( mo_xml_out ).
-  ENDMETHOD.
-
-
-  METHOD serialize_properties_to_xml.
-    DATA:
-      ls_expected_properties LIKE me->mo_spy_oo_object_functions->ms_class_properties,
-      ls_actual_properties   LIKE me->mo_spy_oo_object_functions->ms_class_properties.
-
-    me->mo_spy_oo_object_functions->ms_class_properties-clsname = ms_item-obj_name.
-    me->mo_spy_oo_object_functions->ms_class_properties-uuid = '123'.
-    me->mo_spy_oo_object_functions->ms_class_properties-author = 'author'.
-    me->mo_spy_oo_object_functions->ms_class_properties-createdon = '2016'.
-    me->mo_spy_oo_object_functions->ms_class_properties-changedby = 'other'.
-    me->mo_spy_oo_object_functions->ms_class_properties-changedon = '2017'.
-    me->mo_spy_oo_object_functions->ms_class_properties-r3release = '1'.
-    me->mo_spy_oo_object_functions->ms_class_properties-chgdanyby = 'other'.
-    me->mo_spy_oo_object_functions->ms_class_properties-chgdanyon = '2017'.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    ls_expected_properties =  me->mo_spy_oo_object_functions->ms_class_properties.
-    CLEAR:
-      ls_expected_properties-uuid,
-      ls_expected_properties-author,
-      ls_expected_properties-createdon,
-      ls_expected_properties-changedby,
-      ls_expected_properties-changedon,
-      ls_expected_properties-r3release,
-      ls_expected_properties-chgdanyby,
-      ls_expected_properties-chgdanyon.
-
-    CREATE OBJECT mo_xml_input
-      EXPORTING
-        iv_xml = mo_xml_out->render( ).
-
-    mo_xml_input->read(
-      EXPORTING
-        iv_name       = 'VSEOCLASS'
-      CHANGING
-        cg_data       = ls_actual_properties  ).
-    cl_abap_unit_assert=>assert_equals(
-      act = ls_actual_properties
-      exp = ls_expected_properties ).
-  ENDMETHOD.
-
-  METHOD serialize_skipping_tests_xml.
-    DATA:
-            ls_actual_properties LIKE me->mo_spy_oo_object_functions->ms_class_properties.
-    APPEND 'a_local_test' TO  me->mo_spy_oo_object_functions->mt_local_test_classes.
-    me->mo_spy_oo_object_functions->mv_skip_test_classes = abap_true.
-
-    me->mo_spy_oo_object_functions->ms_class_properties-clsname = ms_item-obj_name.
-    me->mo_spy_oo_object_functions->ms_class_properties-with_unit_tests = abap_true.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    CREATE OBJECT mo_xml_input
-      EXPORTING
-        iv_xml = mo_xml_out->render( ).
-
-    mo_xml_input->read(
-      EXPORTING
-        iv_name       = 'VSEOCLASS'
-      CHANGING
-        cg_data       = ls_actual_properties ).
-    cl_abap_unit_assert=>assert_equals(
-      act = ls_actual_properties-with_unit_tests
-      exp = abap_false ).
-  ENDMETHOD.
-
-  METHOD serialize_textpool.
-    DATA:
-      ls_textpool         TYPE textpool,
-      lt_actual_text_pool TYPE textpool_table.
-    ls_textpool-id = '1'.
-    ls_textpool-key = '1'.
-    APPEND ls_textpool TO mo_spy_oo_object_functions->mt_text_pool.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    CREATE OBJECT mo_xml_input
-      EXPORTING
-        iv_xml = mo_xml_out->render( ).
-
-    mo_xml_input->read(
-      EXPORTING
-        iv_name       = 'TPOOL'
-      CHANGING
-        cg_data       = lt_actual_text_pool ).
-    cl_abap_unit_assert=>assert_equals(
-      act = lt_actual_text_pool
-      exp = mo_spy_oo_object_functions->mt_text_pool ).
-  ENDMETHOD.
-
-  METHOD read_sotr_if_exception_class.
-    DATA:
-      lt_sotr        TYPE ty_sotr_tt,
-      lt_actual_sotr TYPE ty_sotr_tt,
-      ls_sotr        LIKE LINE OF lt_sotr.
-
-    me->mo_spy_oo_object_functions->ms_class_properties-category = seoc_category_exception.
-
-    ls_sotr-header-concept = 'HEADER'.
-    APPEND ls_sotr TO lt_sotr.
-
-    me->mo_spy_oo_object_functions->mt_sotr = lt_sotr.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    CREATE OBJECT mo_xml_input
-      EXPORTING
-        iv_xml = mo_xml_out->render( ).
-
-    mo_xml_input->read(
-      EXPORTING
-        iv_name       = 'SOTR'
-      CHANGING
-        cg_data       = lt_actual_sotr ).
-    cl_abap_unit_assert=>assert_equals(
-      act = lt_actual_sotr
-      exp = mo_spy_oo_object_functions->mt_sotr ).
-  ENDMETHOD.
-
-  METHOD do_not_read_sotr_regular_class.
-    DATA:
-      lt_actual_sotr TYPE ty_sotr_tt.
-
-    CLEAR: me->mo_spy_oo_object_functions->ms_class_properties-category.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    CREATE OBJECT mo_xml_input
-      EXPORTING
-        iv_xml = mo_xml_out->render( ).
-
-    mo_xml_input->read(
-      EXPORTING
-        iv_name       = 'SOTR'
-      CHANGING
-        cg_data       = lt_actual_sotr ).
-    cl_abap_unit_assert=>assert_initial( lt_actual_sotr ).
-  ENDMETHOD.
-
-  METHOD should_serialize_documentation.
-    DATA:
-      lt_lines        TYPE tlinetab,
-      lt_actual_lines TYPE tlinetab,
-      ls_line         LIKE LINE OF lt_lines.
-
-    ls_line-tdline = 'a_line'.
-    APPEND ls_line TO lt_lines.
-
-    me->mo_spy_oo_object_functions->mt_docu_lines = lt_lines.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    CREATE OBJECT mo_xml_input
-      EXPORTING
-        iv_xml = mo_xml_out->render( ).
-
-    mo_xml_input->read(
-      EXPORTING
-        iv_name       = 'LINES'
-      CHANGING
-        cg_data       = lt_actual_lines ).
-    cl_abap_unit_assert=>assert_equals(
-      act = lt_actual_lines
-      exp = me->mo_spy_oo_object_functions->mt_docu_lines ).
-  ENDMETHOD.
-
-  METHOD should_serialize_descriptions.
-    DATA:
-      lt_descriptions        TYPE ty_seocompotx_tt,
-      lt_actual_descriptions TYPE ty_seocompotx_tt,
-      ls_description         TYPE LINE OF ty_seocompotx_tt.
-
-    ls_description-clsname = 'class'.
-    APPEND ls_description TO lt_descriptions.
-
-
-    me->mo_spy_oo_object_functions->mt_descriptions = lt_descriptions.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    CREATE OBJECT mo_xml_input
-      EXPORTING
-        iv_xml = mo_xml_out->render( ).
-
-    mo_xml_input->read(
-      EXPORTING
-        iv_name = 'DESCRIPTIONS'
-      CHANGING
-        cg_data = lt_actual_descriptions ).
-    cl_abap_unit_assert=>assert_equals(
-      act = lt_actual_descriptions
-      exp = me->mo_spy_oo_object_functions->mt_descriptions ).
-  ENDMETHOD.
-
-  METHOD teardown.
-    cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mv_exists_called
-      exp = abap_true ).
-  ENDMETHOD.
-ENDCLASS.
-
-CLASS ltcl_serialize_interface DEFINITION FOR TESTING RISK LEVEL HARMLESS DURATION SHORT
-INHERITING FROM ltc_oo_test.
-  PRIVATE SECTION.
-    METHODS:
-      setup,
-      teardown,
-      serialize_abap FOR TESTING RAISING cx_static_check,
-      no_existing_no_serialize FOR TESTING RAISING cx_static_check,
-      serialize_properties_to_xml FOR TESTING RAISING cx_static_check,
-      should_serialize_documentation FOR TESTING RAISING cx_static_check,
-      should_serialize_descriptions FOR TESTING RAISING cx_static_check.
-ENDCLASS.
-
-CLASS ltcl_serialize_interface IMPLEMENTATION.
-  METHOD setup.
-    CREATE OBJECT mo_fake_object_files.
-    CREATE OBJECT mo_spy_oo_object_functions.
-    me->mo_spy_oo_object_functions->mv_exists = abap_true.
-    lth_oo_factory_injector=>inject( mo_spy_oo_object_functions ).
-
-    ms_item-devclass = 'package_name'.
-    ms_item-obj_name = 'zif_interface'.
-    ms_item-obj_type = 'INTF'.
-
-    CREATE OBJECT mo_oo_object TYPE lcl_object_intf
-      EXPORTING
-        is_item     = ms_item
-        iv_language = sy-langu.
-    CREATE OBJECT mo_xml_out.
-    mo_oo_object->mo_files = mo_fake_object_files.
-  ENDMETHOD.
-
-  METHOD serialize_abap.
-    DATA lt_abap_source TYPE ty_string_tt.
-
-    APPEND 'a_source_line' TO  me->mo_spy_oo_object_functions->mt_source.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    should_serialize_with_obj_key( ).
-
-    lt_abap_source = mo_fake_object_files->read_abap( ).
-    cl_abap_unit_assert=>assert_equals(
-      act = lt_abap_source
-      exp = me->mo_spy_oo_object_functions->mt_source ).
-  ENDMETHOD.
-
-  METHOD no_existing_no_serialize.
-    me->mo_spy_oo_object_functions->mv_exists = abap_false.
-    mo_oo_object->serialize( mo_xml_out ).
-  ENDMETHOD.
-
-
-  METHOD serialize_properties_to_xml.
-    DATA:
-      ls_expected_properties LIKE me->mo_spy_oo_object_functions->ms_interface_properties,
-      ls_actual_properties   LIKE me->mo_spy_oo_object_functions->ms_interface_properties.
-
-    me->mo_spy_oo_object_functions->ms_interface_properties-clsname = ms_item-obj_name.
-    me->mo_spy_oo_object_functions->ms_interface_properties-uuid = '123'.
-    me->mo_spy_oo_object_functions->ms_interface_properties-author = 'author'.
-    me->mo_spy_oo_object_functions->ms_interface_properties-createdon = '2016'.
-    me->mo_spy_oo_object_functions->ms_interface_properties-changedby = 'other'.
-    me->mo_spy_oo_object_functions->ms_interface_properties-changedon = '2017'.
-    me->mo_spy_oo_object_functions->ms_interface_properties-r3release = '1'.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    ls_expected_properties =  me->mo_spy_oo_object_functions->ms_interface_properties.
-    CLEAR:
-      ls_expected_properties-uuid,
-      ls_expected_properties-author,
-      ls_expected_properties-createdon,
-      ls_expected_properties-changedby,
-      ls_expected_properties-changedon,
-      ls_expected_properties-r3release.
-
-    CREATE OBJECT mo_xml_input
-      EXPORTING
-        iv_xml = mo_xml_out->render( ).
-
-    mo_xml_input->read(
-      EXPORTING
-        iv_name       = 'VSEOINTERF'
-      CHANGING
-        cg_data       = ls_actual_properties  ).
-    cl_abap_unit_assert=>assert_equals(
-      act = ls_actual_properties
-      exp = ls_expected_properties ).
-  ENDMETHOD.
-  METHOD should_serialize_documentation.
-    DATA:
-      lt_lines        TYPE tlinetab,
-      lt_actual_lines TYPE tlinetab,
-      ls_line         LIKE LINE OF lt_lines.
-
-    ls_line-tdline = 'a_line'.
-    APPEND ls_line TO lt_lines.
-
-    me->mo_spy_oo_object_functions->mt_docu_lines = lt_lines.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    CREATE OBJECT mo_xml_input
-      EXPORTING
-        iv_xml = mo_xml_out->render( ).
-
-    mo_xml_input->read(
-      EXPORTING
-        iv_name       = 'LINES'
-      CHANGING
-        cg_data       = lt_actual_lines ).
-    cl_abap_unit_assert=>assert_equals(
-      act = lt_actual_lines
-      exp = me->mo_spy_oo_object_functions->mt_docu_lines ).
-  ENDMETHOD.
-
-  METHOD should_serialize_descriptions.
-    DATA:
-      lt_descriptions        TYPE ty_seocompotx_tt,
-      lt_actual_descriptions TYPE ty_seocompotx_tt,
-      ls_description         TYPE LINE OF ty_seocompotx_tt.
-
-    ls_description-clsname = 'class'.
-    APPEND ls_description TO lt_descriptions.
-
-
-    me->mo_spy_oo_object_functions->mt_descriptions = lt_descriptions.
-
-    mo_oo_object->serialize( mo_xml_out ).
-
-    CREATE OBJECT mo_xml_input
-      EXPORTING
-        iv_xml = mo_xml_out->render( ).
-
-    mo_xml_input->read(
-      EXPORTING
-        iv_name = 'DESCRIPTIONS'
-      CHANGING
-        cg_data = lt_actual_descriptions ).
-    cl_abap_unit_assert=>assert_equals(
-      act = lt_actual_descriptions
-      exp = me->mo_spy_oo_object_functions->mt_descriptions ).
-  ENDMETHOD.
-  METHOD teardown.
-    cl_abap_unit_assert=>assert_equals(
-      act = mo_spy_oo_object_functions->mv_exists_called
-      exp = abap_true ).
-  ENDMETHOD.
-ENDCLASS.
-
-CLASS ltcl_delete_oo_test DEFINITION FOR TESTING RISK LEVEL HARMLESS DURATION SHORT
-INHERITING FROM ltc_oo_test.
-  PRIVATE SECTION.
-    METHODS:
-      setup,
-      class_delete FOR TESTING RAISING cx_static_check,
-      interface_delete FOR TESTING RAISING cx_static_check.
-ENDCLASS.
-
-CLASS ltcl_delete_oo_test IMPLEMENTATION.
-  METHOD setup.
-    CREATE OBJECT mo_spy_oo_object_functions.
-    me->mo_spy_oo_object_functions->mv_exists = abap_true.
-    lth_oo_factory_injector=>inject( mo_spy_oo_object_functions ).
-  ENDMETHOD.
-
-  METHOD class_delete.
-    DATA ls_expected_delete_key TYPE seoclskey.
-
-    ms_item-devclass = 'package_name'.
-    ms_item-obj_name = 'zcl_class'.
-    ms_item-obj_type = 'CLAS'.
-    CREATE OBJECT mo_oo_object TYPE lcl_object_clas
-      EXPORTING
-        is_item     = ms_item
-        iv_language = sy-langu.
-
-    mo_oo_object->delete( ).
-
-    ls_expected_delete_key-clsname = ms_item-obj_name.
-
-    cl_abap_unit_assert=>assert_equals(
-      act = me->mo_spy_oo_object_functions->ms_delete_key
-      exp = ls_expected_delete_key ).
-  ENDMETHOD.
-
-  METHOD interface_delete.
-    DATA ls_expected_delete_key TYPE seoclskey.
-
-    ms_item-devclass = 'package_name'.
-    ms_item-obj_name = 'zif_interface'.
-    ms_item-obj_type = 'INTF'.
-
-    CREATE OBJECT mo_oo_object TYPE lcl_object_intf
-      EXPORTING
-        is_item     = ms_item
-        iv_language = sy-langu.
-
-    mo_oo_object->delete( ).
-
-    ls_expected_delete_key-clsname = ms_item-obj_name.
-
-    cl_abap_unit_assert=>assert_equals(
-      act = me->mo_spy_oo_object_functions->ms_delete_key
-      exp = ls_expected_delete_key ).
   ENDMETHOD.
 ENDCLASS.
 
@@ -42934,5 +40955,5 @@ AT SELECTION-SCREEN.
   ENDIF.
 
 ****************************************************
-* abapmerge - 2017-02-09T14:00:45.649Z
+* abapmerge - 2017-01-26T06:43:17.399Z
 ****************************************************
