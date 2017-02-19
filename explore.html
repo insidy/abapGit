@@ -74,12 +74,13 @@ function run() {
       "'>Clone</a><br><h3>" +
       key +
       "</h3><br>" +
-      $.html(val.stars) + 
+      val.stars + 
        "<br>" +               
       val.description );
   });
   shuffle(items);
   $('#content').html( items.join("<br><br>") );
+    $('.github-button').html();
     $.getScript( "https://buttons.github.io/buttons.js");
   });
 }
