@@ -67,6 +67,7 @@ function run() {
   $.getJSON( "repos.json", function( data ) {
   var items = [];
   $.each( data, function( key, val ) {
+    var repoNameWithUser = val.user + "/" val.title;
     items.push( "<h2>" +
       val.title +
       "</h2>&nbsp;<a href='sapevent:install?" +
@@ -74,14 +75,15 @@ function run() {
       "'>Clone</a><br><h3>" +
       key +
       "</h3><br>" +
-       '<a class="github-button" href="https://github.com/ntkme/github-buttons" data-icon="octicon-star" data-style="mega"' +
-       'data-count-href="/ntkme/github-buttons/stargazers" data-count-api="/repos/ntkme/github-buttons#stargazers_count"' +
-       'data-count-aria-label="# stargazers on GitHub" aria-label="Star ntkme/github-buttons on GitHub">Star</a>' +
+       '<a class="github-button" href="https://github.com/' + repoNameWithUser + '" data-icon="octicon-star" data-style="mega"' +
+       'data-count-href="/' + repoNameWithUser + '/stargazers" data-count-api="/repos/' + repoNameWithUser + '#stargazers_count"' +
+       'data-count-aria-label="# stargazers on GitHub" aria-label="Star ' + repoNameWithUser + ' on GitHub">Star</a>' +
        "<br>" +                                 
       val.description );
   });
   shuffle(items);
   $('#content').html( items.join("<br><br>") );
+    //Buttons.js is only loaded in the end because first we need the repos as parsed HTML
     $.getScript( "https://buttons.github.io/buttons.js");
   });
 }
