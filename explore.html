@@ -50,48 +50,40 @@ h3 {
 }
 </style>
 <script src="./js/jquery-1.11.1.min.js"></script>
+<script src="https://buttons.github.io/buttons.js"></script>
 <script>
 function goBack() {
     window.history.back();
 }
-
 function shuffle(sourceArray) {
-
     for (var n = 0; n < sourceArray.length - 1; n++) {
         var k = n + Math.floor(Math.random() * (sourceArray.length - n));
-
         var temp = sourceArray[k];
         sourceArray[k] = sourceArray[n];
         sourceArray[n] = temp;
     }
 }
-
 function run() {
   /* global $ */
   $.getJSON( "repos.json", function( data ) {
   var items = [];
-
   $.each( data, function( key, val ) {
     items.push( "<h2>" +
       val.title +
       "</h2>&nbsp;<a href='sapevent:install?" +
       key +
-      "'>Clone</a>" +
-        '<a class="github-button" href="https://github.com/larshp/abapGit"' + 
-       'data-icon="octicon-star" data-style="mega" data-count-href="/larshp/abapGit/stargazers" ' +
-       'data-count-api="/repos/larshp/abapGit#stargazers_count" data-count-aria-label="# stargazers on GitHub" ' + 
-       'aria-label="Star larshp/abapGit on GitHub">Star</a>' +
-       "<br><h3>" +
+      "'>Clone</a><br><h3>" +
       key +
       "</h3><br>" +
+      '<a class="github-button" href="https://github.com/larshp/abapGit"' + 
+       'data-icon="octicon-star" data-style="mega" data-count-href="/larshp/abapGit/stargazers" ' +
+       'data-count-api="/repos/larshp/abapGit#stargazers_count" data-count-aria-label="# stargazers on GitHub" ' + 
+       'aria-label="Star larshp/abapGit on GitHub">Star</a>'+
        "<br>" +               
       val.description );
   });
-
   shuffle(items);
-
   $('#content').html( items.join("<br><br>") );
-
   });
 }
 </script>
@@ -105,7 +97,8 @@ function run() {
 </div>
 <div id="footer">
 <h3>Add your project? Create an issue in the <a href="https://github.com/larshp/abapGit/issues">tracker</a></h3>
+  <a class="github-button" href="https://github.com/larshp/abapGit" data-icon="octicon-star" data-style="mega" data-count-href="/larshp/abapGit/stargazers" data-count-api="/repos/larshp/abapGit#stargazers_count" data-count-aria-label="# stargazers on GitHub" aria-label="Star larshp/abapGit on GitHub">Star</a>
 </div>
-<script async defer src="https://buttons.github.io/buttons.js"></script>
+
 </body>
 </html>
