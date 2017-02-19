@@ -3,8 +3,7 @@
 	{ 
 		"title": "Foobar",
 		"author": "larshp",
-		"description": "This is a test project, try installing it by clicking clone",
-		"stars": "&lt;a class=&quot;github-button&quot; href=&quot;https://github.com/ntkme/github-buttons&quot; data-icon=&quot;octicon-star&quot; data-style=&quot;mega&quot; data-count-href=&quot;/ntkme/github-buttons/stargazers&quot; data-count-api=&quot;/repos/ntkme/github-buttons#stargazers_count&quot; data-count-aria-label=&quot;# stargazers on GitHub&quot; aria-label=&quot;Star ntkme/github-buttons on GitHub&quot;&gt;Star&lt;/a&gt;"
+		"description": "This is a test project, try installing it by clicking clone"
 	},
   "https://github.com/larshp/abapCov.git":
 	{ 
