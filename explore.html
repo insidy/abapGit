@@ -67,7 +67,7 @@ function run() {
   $.getJSON( "repos.json", function( data ) {
   var items = [];
   $.each( data, function( key, val ) {
-    var repoNameWithUser = val.user + "/" val.title;
+    var repoNameWithUser = val.user + "/" + val.title;
     items.push( "<h2>" +
       val.title +
       "</h2>&nbsp;<a href='sapevent:install?" +
